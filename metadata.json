@@ -1,0 +1,6 @@
+{
+  "name": "MyShop",
+  "description": "A comprehensive store management application for MyShop, featuring barcode checkout, wholesale/retail stock tracking, receipt printing, customer/product analytics, and local/online backup options.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

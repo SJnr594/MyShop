@@ -1,0 +1,49 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer utilities {
+  /* Print-specific styling for pristine receipt printing */
+  @media print {
+    body * {
+      visibility: hidden;
+    }
+    #receipt-print-area, #receipt-print-area * {
+      visibility: visible;
+    }
+    #receipt-print-area {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      max-width: 80mm; /* Standard receipt roll size */
+      padding: 10px;
+      margin: 0;
+      background: white;
+      color: black;
+      font-family: monospace;
+      font-size: 12px;
+    }
+  }
+
+  /* Barcode scanning visual effects */
+  .scanning-laser {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background-color: #ef4444;
+    box-shadow: 0 0 10px #f87171, 0 0 15px #f87171;
+    animation: laser-scan 2s linear infinite;
+  }
+}
+
+@keyframes laser-scan {
+  0% { top: 10%; }
+  50% { top: 90%; }
+  100% { top: 10%; }
+}

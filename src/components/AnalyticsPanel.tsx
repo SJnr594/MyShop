@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Sale, Product } from '../types';
 import { 
   TrendingUp, 
@@ -16,16 +16,27 @@ import {
   ShieldCheck, 
   RefreshCw, 
   ShoppingBag,
-  Eye
+  Eye,
+  Edit,
+  Trash2,
+  X,
+  Check,
+  Plus,
+  Minus,
+  Save,
+  Lock
 } from 'lucide-react';
 
 interface AnalyticsPanelProps {
   sales: Sale[];
   products: Product[];
   currency: string;
+  onUpdateSale?: (updatedSale: Sale) => void;
+  onDeleteSale?: (saleId: string, restock: boolean) => void;
+  activeProfile?: { id: string; name: string; role: string } | null;
 }
 
-export default function AnalyticsPanel({ sales, products, currency }: AnalyticsPanelProps) {
+export default function AnalyticsPanel({ sales, products, currency, onUpdateSale, onDeleteSale, activeProfile }: AnalyticsPanelProps) {
   const [activeSubTab, setActiveSubTab] = useState<'insights' | 'receipts'>('insights');
   const [timeframe, setTimeframe] = useState<'all' | 'today' | 'week' | 'month'>('all');
   
@@ -33,6 +44,80 @@ export default function AnalyticsPanel({ sales, products, currency }: AnalyticsP
   const [auditSearch, setAuditSearch] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('all');
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+
+  // Edit sale states
+  const [isEditing, setIsEditing] = useState(false);
+  const [editCustomerName, setEditCustomerName] = useState('');
+  const [editCustomerPhone, setEditCustomerPhone] = useState('');
+  const [editPaymentMethod, setEditPaymentMethod] = useState<'cash' | 'card' | 'mobile_money' | 'credit'>('cash');
+  const [editNotes, setEditNotes] = useState('');
+  const [editItems, setEditItems] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (selectedSale) {
+      setIsEditing(false);
+      setEditCustomerName(selectedSale.customerName);
+      setEditCustomerPhone(selectedSale.customerPhone);
+      setEditPaymentMethod(selectedSale.paymentMethod);
+      setEditNotes(selectedSale.notes || '');
+      setEditItems(selectedSale.items.map(item => ({ ...item })));
+    }
+  }, [selectedSale]);
+
+  const updateItemQty = (productId: string, delta: number) => {
+    setEditItems(prev => prev.map(item => {
+      if (item.productId === productId) {
+        const newQty = Math.max(1, item.quantity + delta);
+        return { ...item, quantity: newQty };
+      }
+      return item;
+    }));
+  };
+
+  const updateItemPrice = (productId: string, newPrice: number) => {
+    setEditItems(prev => prev.map(item => {
+      if (item.productId === productId) {
+        return { ...item, price: Math.max(0, newPrice) };
+      }
+      return item;
+    }));
+  };
+
+  const removeItemFromEdit = (productId: string) => {
+    if (editItems.length <= 1) {
+      alert("A transaction must have at least 1 item. If you want to void the whole sale, you can delete it or zero it out.");
+      return;
+    }
+    setEditItems(prev => prev.filter(item => item.productId !== productId));
+  };
+
+  const handleSaveEdit = () => {
+    if (!selectedSale || !onUpdateSale) return;
+
+    const subtotal = editItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const discount = selectedSale.discount || 0;
+    const taxableAmount = Math.max(0, subtotal - discount);
+    const taxRate = 16; // 16% standard tax
+    const tax = taxableAmount * (taxRate / 100);
+    const total = taxableAmount + tax;
+
+    const updatedSale: Sale = {
+      ...selectedSale,
+      customerName: editCustomerName.trim() || 'Guest Customer',
+      customerPhone: editCustomerPhone.trim() || 'N/A',
+      paymentMethod: editPaymentMethod,
+      notes: editNotes.trim(),
+      items: editItems,
+      subtotal,
+      tax,
+      total
+    };
+
+    onUpdateSale(updatedSale);
+    setSelectedSale(updatedSale);
+    setIsEditing(false);
+    alert("Transaction logs updated successfully and physical inventory adjusted.");
+  };
 
   const now = new Date();
 
@@ -681,9 +766,44 @@ export default function AnalyticsPanel({ sales, products, currency }: AnalyticsP
                   </div>
 
                   <div className="flex items-center space-x-1.5">
+                    {activeProfile?.role === 'admin' ? (
+                      <>
+                        {!isEditing && (
+                          <button
+                            onClick={() => setIsEditing(true)}
+                            className="bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs px-3.5 py-1.5 rounded-lg font-bold flex items-center space-x-1.5 transition-all border border-amber-200 cursor-pointer"
+                            title="Edit cashier's checkout details to ensure correct vouchers"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                            <span>Edit Entry</span>
+                          </button>
+                        )}
+                        {!isEditing && onDeleteSale && (
+                          <button
+                            onClick={() => {
+                              if (window.confirm(`Are you sure you want to permanently delete/void receipt ${selectedSale.id}? This action will restock the items to retail shelf inventory and cannot be undone.`)) {
+                                onDeleteSale(selectedSale.id, true);
+                                setSelectedSale(null);
+                                alert("Receipt successfully deleted and stock restocked.");
+                              }
+                            }}
+                            className="bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs px-3.5 py-1.5 rounded-lg font-bold flex items-center space-x-1.5 transition-all border border-rose-200 cursor-pointer"
+                            title="Void receipt and restock physical inventory"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete Receipt</span>
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-[10px] text-slate-500 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 flex items-center space-x-1">
+                        <Lock className="w-3 h-3 text-slate-400" />
+                        <span>Admin-Only Edit/Delete</span>
+                      </div>
+                    )}
                     <button
                       onClick={triggerReceiptPrint}
-                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-3.5 py-1.5 rounded-lg font-bold flex items-center space-x-1.5 transition-all"
+                      className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs px-3.5 py-1.5 rounded-lg font-bold flex items-center space-x-1.5 transition-all cursor-pointer"
                       title="Simulate paper thermal printing of this audited receipt"
                     >
                       <Printer className="w-3.5 h-3.5" />
@@ -692,115 +812,303 @@ export default function AnalyticsPanel({ sales, products, currency }: AnalyticsP
                   </div>
                 </div>
 
-                {/* THE HIGH FIDELITY THERMAL RECEIPT CANVAS */}
-                <div className="flex justify-center p-6 bg-slate-50 rounded-xl border border-slate-200/45" id="receipt-print-wrapper">
-                  <div 
-                    className="bg-white p-6 rounded-lg shadow-md max-w-sm w-full border border-slate-200 overflow-hidden text-xs text-slate-800 font-mono flex flex-col relative"
-                    id="print-receipt-container"
-                  >
-                    {/* Security Stamp overlay */}
-                    <div className="absolute top-[35%] right-[5%] -rotate-12 pointer-events-none select-none opacity-15 border-[3px] border-emerald-600 text-emerald-600 font-black px-4 py-2 text-sm tracking-widest rounded-md">
-                      PAID & VERIFIED
-                    </div>
-
-                    {/* Receipt Details and Header */}
-                    <div className="text-center space-y-1 mb-4">
-                      <h3 className="text-sm font-bold text-black uppercase tracking-wide">MyShop POS Receipt</h3>
-                      <p className="text-[9px] text-slate-500 leading-normal">
-                        100 Storefront Plaza, Suite A<br />
-                        New York, NY 10001
-                      </p>
-                      <div className="h-px border-t border-dashed border-slate-300 my-2.5"></div>
-                      
-                      <div className="text-[10px] text-left text-slate-600 space-y-0.5 font-mono">
-                        <div><strong>RECEIPT ID:</strong> {selectedSale.id}</div>
-                        <div><strong>TIMESTAMP:</strong> {new Date(selectedSale.timestamp).toLocaleString()}</div>
-                        <div><strong>CASHIER:</strong> {selectedSale.cashierName || 'System Admin'}</div>
-                        <div><strong>CUSTOMER:</strong> {selectedSale.customerName}</div>
-                        {selectedSale.customerPhone && selectedSale.customerPhone !== 'N/A' && (
-                          <div><strong>PHONE:</strong> {selectedSale.customerPhone}</div>
-                        )}
+                {/* THE HIGH FIDELITY THERMAL RECEIPT CANVAS OR EDIT INTERFACE */}
+                {isEditing ? (
+                  <div className="flex justify-center p-6 bg-amber-50/40 rounded-xl border border-amber-200" id="receipt-edit-wrapper">
+                    <div 
+                      className="bg-white p-6 rounded-lg shadow-md max-w-sm w-full border border-amber-300 overflow-hidden text-xs text-slate-800 font-mono flex flex-col relative"
+                      id="edit-receipt-container"
+                    >
+                      <div className="absolute top-[2%] right-[4%] bg-amber-100 text-amber-800 border border-amber-200 font-bold px-2 py-0.5 text-[9px] rounded uppercase font-sans animate-pulse">
+                        Editing Entry
                       </div>
-                      <div className="h-px border-t border-dashed border-slate-300 my-2.5"></div>
-                    </div>
 
-                    {/* Items table */}
-                    <table className="w-full text-left text-[11px] font-mono mb-4">
-                      <thead>
-                        <tr className="border-b border-dashed border-slate-300 text-slate-500">
-                          <th className="pb-1 text-left">Item Name</th>
-                          <th className="pb-1 text-center">Qty</th>
-                          <th className="pb-1 text-right">Unit</th>
-                          <th className="pb-1 text-right">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {selectedSale.items.map((item, idx) => (
-                          <tr key={idx} className="text-black hover:bg-slate-50/20">
-                            <td className="py-1 max-w-[140px] truncate">{item.productName}</td>
-                            <td className="py-1 text-center">{item.quantity}</td>
-                            <td className="py-1 text-right">{currency}{item.price.toFixed(2)}</td>
-                            <td className="py-1 text-right">{currency}{(item.price * item.quantity).toFixed(2)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                      {/* Header */}
+                      <div className="text-center space-y-1 mb-4">
+                        <h3 className="text-sm font-bold text-black uppercase tracking-wide">Edit Receipt</h3>
+                        <p className="text-[10px] text-amber-600 font-sans font-semibold">
+                          Modify parameters to match accurate sales vouchers
+                        </p>
+                        <div className="h-px border-t border-dashed border-slate-300 my-2.5"></div>
+                        
+                        <div className="text-[10px] text-left text-slate-600 space-y-2 font-mono">
+                          <div><strong>RECEIPT ID:</strong> {selectedSale.id}</div>
+                          <div><strong>TIMESTAMP:</strong> {new Date(selectedSale.timestamp).toLocaleString()}</div>
+                          
+                          <div>
+                            <label className="block text-[9px] font-sans font-bold text-slate-500 uppercase">Customer Name *</label>
+                            <input
+                              type="text"
+                              value={editCustomerName}
+                              onChange={(e) => setEditCustomerName(e.target.value)}
+                              className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs text-slate-800 focus:outline-none focus:border-amber-500 mt-0.5"
+                            />
+                          </div>
 
-                    {/* Receipt totals breakdown */}
-                    <div className="font-mono text-[11px] space-y-1.5 border-t border-dashed border-slate-300 pt-2.5 mb-4 text-black">
-                      <div className="flex justify-between">
-                        <span>SUBTOTAL</span>
-                        <span>{currency}{selectedSale.subtotal.toFixed(2)}</span>
-                      </div>
-                      {selectedSale.discount > 0 && (
-                        <div className="flex justify-between text-rose-700 font-semibold">
-                          <span>DISCOUNT SAVINGS</span>
-                          <span>-{currency}{selectedSale.discount.toFixed(2)}</span>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-[9px] font-sans font-bold text-slate-500 uppercase">Customer Phone</label>
+                              <input
+                                type="text"
+                                value={editCustomerPhone}
+                                onChange={(e) => setEditCustomerPhone(e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs text-slate-800 focus:outline-none focus:border-amber-500 mt-0.5"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[9px] font-sans font-bold text-slate-500 uppercase">Payment Method *</label>
+                              <select
+                                value={editPaymentMethod}
+                                onChange={(e) => setEditPaymentMethod(e.target.value as any)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded px-2 py-1 text-xs text-slate-800 focus:outline-none focus:border-amber-500 mt-0.5"
+                              >
+                                <option value="cash">Cash</option>
+                                <option value="card">Card</option>
+                                <option value="mobile_money">Mobile Money</option>
+                                <option value="credit">Store Credit</option>
+                              </select>
+                            </div>
+                          </div>
                         </div>
-                      )}
-                      <div className="flex justify-between">
-                        <span>TAX VAT RATE ({sales[0] ? '16%' : 'Tax'})</span>
-                        <span>{currency}{selectedSale.tax.toFixed(2)}</span>
+                        <div className="h-px border-t border-dashed border-slate-300 my-2.5"></div>
                       </div>
-                      <div className="h-px border-t border-dashed border-slate-300 my-1"></div>
-                      <div className="flex justify-between text-xs font-bold text-black">
-                        <span>GRAND TOTAL</span>
-                        <span>{currency}{selectedSale.total.toFixed(2)}</span>
-                      </div>
-                      <div className="h-px border-t border-dashed border-slate-300 my-1"></div>
-                      <div className="flex justify-between text-[9px] text-slate-500 font-bold uppercase">
-                        <span>METHOD OF PAYMENT</span>
-                        <span>{selectedSale.paymentMethod.replace(/_/g, ' ')}</span>
-                      </div>
-                    </div>
 
-                    {/* Notes if any */}
-                    {selectedSale.notes && (
-                      <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200/50 text-[10px] text-slate-600 mb-4 font-mono leading-relaxed">
-                        <span className="font-bold text-[9px] text-slate-400 block uppercase mb-0.5">Audit Checkout Notes:</span>
-                        "{selectedSale.notes}"
-                      </div>
-                    )}
+                      {/* Items table */}
+                      <div className="space-y-2 mb-4">
+                        <div className="grid grid-cols-12 gap-1 border-b border-dashed border-slate-300 text-[10px] text-slate-500 pb-1 uppercase font-bold">
+                          <span className="col-span-5 text-left">Item Name</span>
+                          <span className="col-span-3 text-center">Qty</span>
+                          <span className="col-span-3 text-right">Price</span>
+                          <span className="col-span-1 text-center"></span>
+                        </div>
+                        {editItems.map((item, idx) => (
+                          <div key={idx} className="grid grid-cols-12 gap-1 items-center py-1 border-b border-slate-50">
+                            <span className="col-span-5 truncate text-slate-800 font-sans" title={item.productName}>
+                              {item.productName}
+                            </span>
+                            
+                            <div className="col-span-3 flex items-center justify-center space-x-1">
+                              <button
+                                type="button"
+                                onClick={() => updateItemQty(item.productId, -1)}
+                                className="w-4 h-4 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded font-bold flex items-center justify-center text-[10px]"
+                              >
+                                -
+                              </button>
+                              <span className="text-center font-bold text-slate-900 w-5">{item.quantity}</span>
+                              <button
+                                type="button"
+                                onClick={() => updateItemQty(item.productId, 1)}
+                                className="w-4 h-4 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded font-bold flex items-center justify-center text-[10px]"
+                              >
+                                +
+                              </button>
+                            </div>
 
-                    {/* Authentic-looking barcode representation */}
-                    <div className="flex flex-col items-center justify-center space-y-1 py-1 text-center">
-                      <div className="flex h-10 items-stretch space-x-[1px] opacity-80" title={selectedSale.id}>
-                        {selectedSale.id.split('').map((char, index) => {
-                          const barClass = (char.charCodeAt(0) % 3 === 0) ? 'w-[3px]' : (char.charCodeAt(0) % 2 === 0) ? 'w-[1.5px]' : 'w-[0.5px]';
-                          const colorClass = (index % 4 === 0) ? 'bg-transparent' : 'bg-slate-900';
-                          return <div key={index} className={`${barClass} ${colorClass}`}></div>;
-                        })}
-                      </div>
-                      <span className="text-[8px] text-slate-400 tracking-wider font-mono uppercase">{selectedSale.id}</span>
-                    </div>
+                            <div className="col-span-3 text-right relative">
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={item.price}
+                                onChange={(e) => updateItemPrice(item.productId, parseFloat(e.target.value) || 0)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded p-0.5 text-right font-mono text-[10px] text-slate-800"
+                              />
+                            </div>
 
-                    {/* Receipt footers */}
-                    <div className="text-center font-mono text-[9px] text-slate-400 space-y-1.5 mt-3 pt-3 border-t border-dashed border-slate-200 leading-normal">
-                      <p>THANK YOU FOR YOUR VALUED BUSINESS!</p>
-                      <p className="text-[8px]">Please retain receipt for verification.</p>
+                            <button
+                              type="button"
+                              onClick={() => removeItemFromEdit(item.productId)}
+                              className="col-span-1 text-red-500 hover:text-red-700 flex justify-center cursor-pointer"
+                              title="Delete item from receipt"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Totals Breakdown */}
+                      <div className="font-mono text-[11px] space-y-1.5 border-t border-dashed border-slate-300 pt-2.5 mb-4 text-black">
+                        {(() => {
+                          const subtotal = editItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+                          const discount = selectedSale.discount || 0;
+                          const taxableAmount = Math.max(0, subtotal - discount);
+                          const taxRate = 16;
+                          const tax = taxableAmount * (taxRate / 100);
+                          const total = taxableAmount + tax;
+
+                          return (
+                            <>
+                              <div className="flex justify-between text-slate-500">
+                                <span>RECALCULATED SUB</span>
+                                <span>{currency}{subtotal.toFixed(2)}</span>
+                              </div>
+                              {discount > 0 && (
+                                <div className="flex justify-between text-rose-700 font-semibold">
+                                  <span>DISCOUNT SAVINGS</span>
+                                  <span>-{currency}{discount.toFixed(2)}</span>
+                                </div>
+                              )}
+                              <div className="flex justify-between text-slate-500">
+                                <span>RECALCULATED VAT (16%)</span>
+                                <span>{currency}{tax.toFixed(2)}</span>
+                              </div>
+                              <div className="h-px border-t border-dashed border-slate-300 my-1"></div>
+                              <div className="flex justify-between text-xs font-bold text-amber-800 bg-amber-50 p-1.5 rounded border border-amber-200/50">
+                                <span>ADJUSTED TOTAL</span>
+                                <span>{currency}{total.toFixed(2)}</span>
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </div>
+
+                      {/* Notes / Reason for editing */}
+                      <div className="space-y-1 mb-4 font-sans text-[10px]">
+                        <label className="block font-bold text-slate-500 uppercase">Audit Adjustment Notes *</label>
+                        <textarea
+                          required
+                          placeholder="e.g. Corrected cashier entry typo; updated physical payment mode to Card"
+                          value={editNotes}
+                          onChange={(e) => setEditNotes(e.target.value)}
+                          rows={2}
+                          className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs text-slate-800 focus:outline-none focus:border-amber-500 font-mono"
+                        />
+                      </div>
+
+                      {/* Action buttons inside the receipt */}
+                      <div className="flex space-x-2 pt-2 border-t border-dashed border-slate-200">
+                        <button
+                          type="button"
+                          onClick={() => setIsEditing(false)}
+                          className="flex-1 border border-slate-200 hover:bg-slate-50 text-slate-600 font-sans font-bold py-2 rounded-lg text-center transition-all cursor-pointer flex items-center justify-center space-x-1 text-[11px]"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          <span>Cancel</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSaveEdit}
+                          className="flex-1 bg-amber-600 hover:bg-amber-500 text-white font-sans font-bold py-2 rounded-lg text-center transition-all cursor-pointer flex items-center justify-center space-x-1 text-[11px] shadow-sm shadow-amber-600/10"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                          <span>Save Changes</span>
+                        </button>
+                      </div>
+
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="flex justify-center p-6 bg-slate-50 rounded-xl border border-slate-200/45" id="receipt-print-wrapper">
+                    <div 
+                      className="bg-white p-6 rounded-lg shadow-md max-w-sm w-full border border-slate-200 overflow-hidden text-xs text-slate-800 font-mono flex flex-col relative"
+                      id="print-receipt-container"
+                    >
+                      {/* Security Stamp overlay */}
+                      <div className="absolute top-[35%] right-[5%] -rotate-12 pointer-events-none select-none opacity-15 border-[3px] border-emerald-600 text-emerald-600 font-black px-4 py-2 text-sm tracking-widest rounded-md">
+                        PAID & VERIFIED
+                      </div>
+
+                      {/* Receipt Details and Header */}
+                      <div className="text-center space-y-1 mb-4">
+                        <h3 className="text-sm font-bold text-black uppercase tracking-wide">MyShop POS Receipt</h3>
+                        <p className="text-[9px] text-slate-500 leading-normal">
+                          100 Storefront Plaza, Suite A<br />
+                          New York, NY 10001
+                        </p>
+                        <div className="h-px border-t border-dashed border-slate-300 my-2.5"></div>
+                        
+                        <div className="text-[10px] text-left text-slate-600 space-y-0.5 font-mono">
+                          <div><strong>RECEIPT ID:</strong> {selectedSale.id}</div>
+                          <div><strong>TIMESTAMP:</strong> {new Date(selectedSale.timestamp).toLocaleString()}</div>
+                          <div><strong>CASHIER:</strong> {selectedSale.cashierName || 'System Admin'}</div>
+                          <div><strong>CUSTOMER:</strong> {selectedSale.customerName}</div>
+                          {selectedSale.customerPhone && selectedSale.customerPhone !== 'N/A' && (
+                            <div><strong>PHONE:</strong> {selectedSale.customerPhone}</div>
+                          )}
+                        </div>
+                        <div className="h-px border-t border-dashed border-slate-300 my-2.5"></div>
+                      </div>
+
+                      {/* Items table */}
+                      <table className="w-full text-left text-[11px] font-mono mb-4">
+                        <thead>
+                          <tr className="border-b border-dashed border-slate-300 text-slate-500">
+                            <th className="pb-1 text-left">Item Name</th>
+                            <th className="pb-1 text-center">Qty</th>
+                            <th className="pb-1 text-right">Unit</th>
+                            <th className="pb-1 text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedSale.items.map((item, idx) => (
+                            <tr key={idx} className="text-black hover:bg-slate-50/20">
+                              <td className="py-1 max-w-[140px] truncate">{item.productName}</td>
+                              <td className="py-1 text-center">{item.quantity}</td>
+                              <td className="py-1 text-right">{currency}{item.price.toFixed(2)}</td>
+                              <td className="py-1 text-right">{currency}{(item.price * item.quantity).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+
+                      {/* Receipt totals breakdown */}
+                      <div className="font-mono text-[11px] space-y-1.5 border-t border-dashed border-slate-300 pt-2.5 mb-4 text-black">
+                        <div className="flex justify-between">
+                          <span>SUBTOTAL</span>
+                          <span>{currency}{selectedSale.subtotal.toFixed(2)}</span>
+                        </div>
+                        {selectedSale.discount > 0 && (
+                          <div className="flex justify-between text-rose-700 font-semibold">
+                            <span>DISCOUNT SAVINGS</span>
+                            <span>-{currency}{selectedSale.discount.toFixed(2)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between">
+                          <span>TAX VAT RATE ({sales[0] ? '16%' : 'Tax'})</span>
+                          <span>{currency}{selectedSale.tax.toFixed(2)}</span>
+                        </div>
+                        <div className="h-px border-t border-dashed border-slate-300 my-1"></div>
+                        <div className="flex justify-between text-xs font-bold text-black">
+                          <span>GRAND TOTAL</span>
+                          <span>{currency}{selectedSale.total.toFixed(2)}</span>
+                        </div>
+                        <div className="h-px border-t border-dashed border-slate-300 my-1"></div>
+                        <div className="flex justify-between text-[9px] text-slate-500 font-bold uppercase">
+                          <span>METHOD OF PAYMENT</span>
+                          <span>{selectedSale.paymentMethod.replace(/_/g, ' ')}</span>
+                        </div>
+                      </div>
+
+                      {/* Notes if any */}
+                      {selectedSale.notes && (
+                        <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200/50 text-[10px] text-slate-600 mb-4 font-mono leading-relaxed">
+                          <span className="font-bold text-[9px] text-slate-400 block uppercase mb-0.5">Audit Checkout Notes:</span>
+                          "{selectedSale.notes}"
+                        </div>
+                      )}
+
+                      {/* Authentic-looking barcode representation */}
+                      <div className="flex flex-col items-center justify-center space-y-1 py-1 text-center">
+                        <div className="flex h-10 items-stretch space-x-[1px] opacity-80" title={selectedSale.id}>
+                          {selectedSale.id.split('').map((char, index) => {
+                            const barClass = (char.charCodeAt(0) % 3 === 0) ? 'w-[3px]' : (char.charCodeAt(0) % 2 === 0) ? 'w-[1.5px]' : 'w-[0.5px]';
+                            const colorClass = (index % 4 === 0) ? 'bg-transparent' : 'bg-slate-900';
+                            return <div key={index} className={`${barClass} ${colorClass}`}></div>;
+                          })}
+                        </div>
+                        <span className="text-[8px] text-slate-400 tracking-wider font-mono uppercase">{selectedSale.id}</span>
+                      </div>
+
+                      {/* Receipt footers */}
+                      <div className="text-center font-mono text-[9px] text-slate-400 space-y-1.5 mt-3 pt-3 border-t border-dashed border-slate-200 leading-normal">
+                        <p>THANK YOU FOR YOUR VALUED BUSINESS!</p>
+                        <p className="text-[8px]">Please retain receipt for verification.</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Audit verification advice card */}
                 <div className="mt-4 bg-blue-50 border border-blue-200 rounded-xl p-3.5 text-xs text-blue-800 space-y-1.5">

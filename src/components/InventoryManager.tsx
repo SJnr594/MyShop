@@ -14,6 +14,7 @@ interface InventoryManagerProps {
   onBuyWholesaleStock: (productId: string, quantity: number, notes: string) => void;
   onBulkImport: (newProducts: Omit<Product, 'id'>[], updatedProducts: Product[]) => void;
   onUpdateSettings?: (newSettings: StoreSettings) => void;
+  onLogDamagedGoods: (productId: string, quantity: number, location: 'wholesale' | 'retail', reason: string, notes: string) => void;
 }
 
 export default function InventoryManager({
@@ -26,7 +27,8 @@ export default function InventoryManager({
   onRestockShelf,
   onBuyWholesaleStock,
   onBulkImport,
-  onUpdateSettings
+  onUpdateSettings,
+  onLogDamagedGoods
 }: InventoryManagerProps) {
   const [activeTab, setActiveTab] = useState<'catalog' | 'transfer' | 'logs' | 'audit'>('catalog');
   const [searchQuery, setSearchQuery] = useState('');
@@ -96,6 +98,13 @@ export default function InventoryManager({
   const [purchaseQty, setPurchaseQty] = useState('');
   const [purchaseCost, setPurchaseCost] = useState('');
   const [purchaseNotes, setPurchaseNotes] = useState('');
+
+  // Damaged goods/shrinkage states
+  const [damageProductId, setDamageProductId] = useState('');
+  const [damageQty, setDamageQty] = useState('');
+  const [damageLocation, setDamageLocation] = useState<'wholesale' | 'retail'>('retail');
+  const [damageReason, setDamageReason] = useState('Broken / Leaked / Damaged');
+  const [damageNotes, setDamageNotes] = useState('');
 
   // Extract unique categories, blending configured settings categories with any product categories
   const configuredCategories = settings.categories && settings.categories.length > 0
@@ -279,6 +288,37 @@ export default function InventoryManager({
     setPurchaseCost('');
     setPurchaseNotes('');
     alert("Wholesale stock received and logged!");
+  };
+
+  const handleDamageSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!damageProductId || !damageQty) return;
+    const qty = parseInt(damageQty, 10);
+    if (qty <= 0) return;
+
+    const selectedProd = products.find(p => p.id === damageProductId);
+    if (!selectedProd) return;
+
+    const currentStock = damageLocation === 'wholesale' ? selectedProd.wholesaleStock : selectedProd.retailStock;
+    if (currentStock < qty) {
+      alert(`Warning: Selected quantity (${qty}) exceeds current stock level (${currentStock})! Proceeding will set stock to 0.`);
+    }
+
+    onLogDamagedGoods(
+      damageProductId,
+      qty,
+      damageLocation,
+      damageReason,
+      damageNotes || `Shrinkage: ${damageReason}`
+    );
+
+    // Reset
+    setDamageProductId('');
+    setDamageQty('');
+    setDamageLocation('retail');
+    setDamageReason('Broken / Leaked / Damaged');
+    setDamageNotes('');
+    alert("Damaged goods write-off logged and inventory updated!");
   };
 
   return (
@@ -1200,6 +1240,125 @@ export default function InventoryManager({
                 <span>Acknowledge Supplier Delivery</span>
                 <Check className="w-4 h-4" />
               </button>
+            </form>
+          </div>
+
+          {/* Form 3: Record Damaged Goods / Write-offs */}
+          <div className="bg-white rounded-xl border border-red-100 shadow-sm p-5 space-y-4 lg:col-span-2" id="damaged-goods-box">
+            <div className="flex items-center space-x-2.5 border-b border-red-50 pb-3">
+              <div className="p-1.5 bg-red-50 text-red-600 rounded-md">
+                <AlertTriangle className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-red-800">Record Damaged Goods & Write-Offs (Shrinkage)</h3>
+                <p className="text-[10px] text-red-500">Log spoiled, expired, broken, or stolen items. This will write off stock immediately.</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleDamageSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+              <div className="md:col-span-1">
+                <label className="block text-slate-500 mb-1 font-medium">Select Damaged Item *</label>
+                <select
+                  required
+                  value={damageProductId}
+                  onChange={(e) => setDamageProductId(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none"
+                  id="damage-product-select"
+                >
+                  <option value="">-- Choose item to write off --</option>
+                  {products.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} (Wholesale: {p.wholesaleStock} | Shelf: {p.retailStock})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-500 mb-1 font-medium">Stock Room Location *</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDamageLocation('retail')}
+                    className={`p-2.5 rounded-lg border text-center font-semibold transition-all cursor-pointer ${
+                      damageLocation === 'retail'
+                        ? 'bg-rose-50 border-rose-300 text-rose-700'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    Front Retail Shelf
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDamageLocation('wholesale')}
+                    className={`p-2.5 rounded-lg border text-center font-semibold transition-all cursor-pointer ${
+                      damageLocation === 'wholesale'
+                        ? 'bg-rose-50 border-rose-300 text-rose-700'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    Wholesale Warehouse
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-500 mb-1 font-medium">Write-off Quantity *</label>
+                <input
+                  type="number"
+                  required
+                  min="1"
+                  placeholder="e.g. 5"
+                  value={damageQty}
+                  onChange={(e) => setDamageQty(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-mono"
+                  id="damage-qty-input"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-500 mb-1 font-medium">Primary Write-off Reason *</label>
+                <select
+                  required
+                  value={damageReason}
+                  onChange={(e) => setDamageReason(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none font-sans"
+                  id="damage-reason-select"
+                >
+                  <option value="Broken / Leaked / Damaged">Broken / Leaked / Damaged</option>
+                  <option value="Expired / Outdated">Expired / Outdated</option>
+                  <option value="Theft / Shrinkage / Missing">Theft / Shrinkage / Missing</option>
+                  <option value="Spoilage / Rotting">Spoilage / Rotting</option>
+                  <option value="Returned & Defective">Returned & Defective</option>
+                  <option value="Other Adjustment">Other Adjustment</option>
+                </select>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-slate-500 mb-1 font-medium">Additional Audit Details (Operator Sign-off/Notes)</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="e.g. Leaked bottle, signed off by manager"
+                    value={damageNotes}
+                    onChange={(e) => setDamageNotes(e.target.value)}
+                    className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-sans"
+                    id="damage-notes-input"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!damageProductId || !damageQty}
+                    className={`px-6 py-2.5 font-semibold rounded-lg text-white flex items-center space-x-1.5 transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                      !damageProductId || !damageQty
+                        ? 'bg-red-300 cursor-not-allowed opacity-50'
+                        : 'bg-red-600 hover:bg-red-500 shadow-md shadow-red-600/10'
+                    }`}
+                    id="damage-submit-btn"
+                  >
+                    <span>Log Write-off</span>
+                  </button>
+                </div>
+              </div>
             </form>
           </div>
         </div>

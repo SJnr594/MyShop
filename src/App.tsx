@@ -498,6 +498,135 @@ export default function App() {
     setSettings(newSettings);
   };
 
+  const handleUpdateSale = (updatedSale: Sale) => {
+    const originalSale = sales.find(s => s.id === updatedSale.id);
+    if (!originalSale) return;
+
+    // All productIds involved
+    const allProductIds = Array.from(new Set([
+      ...originalSale.items.map(i => i.productId),
+      ...updatedSale.items.map(i => i.productId)
+    ]));
+
+    const stockLogsToAdd: StockLog[] = [];
+
+    setProducts(prev => prev.map(p => {
+      if (allProductIds.includes(p.id)) {
+        const origItem = originalSale.items.find(item => item.productId === p.id);
+        const newItem = updatedSale.items.find(item => item.productId === p.id);
+        const origQty = origItem ? origItem.quantity : 0;
+        const newQty = newItem ? newItem.quantity : 0;
+        const diff = newQty - origQty; // diff is net change in items sold
+
+        if (diff !== 0) {
+          // If diff > 0, we sold more, so we subtract diff from retail stock
+          // If diff < 0, we returned some, so we add (-diff) back to retail stock
+          const newRetailStock = Math.max(0, p.retailStock - diff);
+
+          stockLogsToAdd.push({
+            id: `log_sale_edit_${updatedSale.id}_${p.id}_${Date.now()}`,
+            productId: p.id,
+            productName: p.name,
+            timestamp: Date.now(),
+            type: 'adjustment',
+            quantity: -diff, // negative represents stock deduction, positive is addition
+            notes: `Corrected cashier sale entry ${updatedSale.id}. Adjusted qty from ${origQty} to ${newQty}.`
+          });
+
+          return {
+            ...p,
+            retailStock: newRetailStock
+          };
+        }
+      }
+      return p;
+    }));
+
+    // Update sales logs state
+    setSales(prev => prev.map(s => s.id === updatedSale.id ? updatedSale : s));
+
+    // Append logs
+    if (stockLogsToAdd.length > 0) {
+      setStockLogs(prev => [...prev, ...stockLogsToAdd]);
+    }
+  };
+
+  const handleDeleteSale = (saleId: string, restock: boolean = true) => {
+    const saleToDelete = sales.find(s => s.id === saleId);
+    if (!saleToDelete) return;
+
+    const stockLogsToAdd: StockLog[] = [];
+
+    if (restock) {
+      setProducts(prev => prev.map(p => {
+        const soldItem = saleToDelete.items.find(item => item.productId === p.id);
+        if (soldItem) {
+          const newRetailStock = p.retailStock + soldItem.quantity;
+          stockLogsToAdd.push({
+            id: `log_sale_delete_${saleId}_${p.id}_${Date.now()}`,
+            productId: p.id,
+            productName: p.name,
+            timestamp: Date.now(),
+            type: 'adjustment',
+            quantity: soldItem.quantity,
+            notes: `Deleted/voided sale entry ${saleId}. Restocked ${soldItem.quantity} units to retail shelf.`
+          });
+          return {
+            ...p,
+            retailStock: newRetailStock
+          };
+        }
+        return p;
+      }));
+    }
+
+    setSales(prev => prev.filter(s => s.id !== saleId));
+
+    if (stockLogsToAdd.length > 0) {
+      setStockLogs(prev => [...prev, ...stockLogsToAdd]);
+    }
+  };
+
+  const handleLogDamagedGoods = (
+    productId: string,
+    quantity: number,
+    location: 'wholesale' | 'retail',
+    reason: string,
+    notes: string
+  ) => {
+    setProducts(prev => prev.map(p => {
+      if (p.id === productId) {
+        if (location === 'wholesale') {
+          return {
+            ...p,
+            wholesaleStock: Math.max(0, p.wholesaleStock - quantity)
+          };
+        } else {
+          return {
+            ...p,
+            retailStock: Math.max(0, p.retailStock - quantity)
+          };
+        }
+      }
+      return p;
+    }));
+
+    const prod = products.find(p => p.id === productId);
+    if (!prod) return;
+
+    const log: StockLog = {
+      id: `log_damage_${productId}_${Date.now()}`,
+      productId,
+      productName: prod.name,
+      timestamp: Date.now(),
+      type: 'adjustment',
+      quantity: -quantity, // reduction of stock
+      notes: `${reason} Write-off: ${notes || 'Logged as damaged goods shrinkage.'}`
+    };
+
+    setStockLogs(prev => [...prev, log]);
+  };
+
   // Loading Screen
   if (!isLoaded) {
     return (
@@ -1172,6 +1301,7 @@ export default function App() {
                   onBuyWholesaleStock={handleBuyWholesaleStock}
                   onBulkImport={handleBulkImport}
                   onUpdateSettings={handleUpdateSettings}
+                  onLogDamagedGoods={handleLogDamagedGoods}
                 />
               )}
 
@@ -1180,6 +1310,9 @@ export default function App() {
                   sales={sales}
                   products={products}
                   currency={settings.currency}
+                  onUpdateSale={handleUpdateSale}
+                  onDeleteSale={handleDeleteSale}
+                  activeProfile={activeProfile}
                 />
               )}
 

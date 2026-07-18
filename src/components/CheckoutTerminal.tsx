@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Product, Sale, SaleItem, StoreSettings, UserProfile } from '../types';
-import { ShoppingCart, Search, User, Trash2, CreditCard, DollarSign, Tag, Printer, CheckCircle, Barcode, Camera, Sparkles, AlertCircle } from 'lucide-react';
+import { ShoppingCart, Search, User, Trash2, CreditCard, DollarSign, Tag, Printer, CheckCircle, Barcode, Camera, Sparkles, AlertCircle, HelpCircle, Keyboard, Monitor, Volume2 } from 'lucide-react';
 import BarcodeScanner from './BarcodeScanner';
 
 interface CheckoutTerminalProps {
@@ -52,69 +52,211 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
   const [checkedCustomer, setCheckedCustomer] = useState(false);
   const [checkedPayment, setCheckedPayment] = useState(false);
 
-  // Global key listener for physical hardware scanners (Keyboard wedge)
-  useEffect(() => {
-    let rawKeysBuffer = '';
-    let lastKeyTime = Date.now();
+  // Printer width configuration format
+  const [printFormat, setPrintFormat] = useState<'80mm' | '58mm' | 'A4'>('80mm');
 
-    const handleGlobalKeyPress = (e: KeyboardEvent) => {
-      // Avoid capturing input if the user is actively typing in a standard input field
-      const activeEl = document.activeElement;
-      if (activeEl && (
+  // Help tutorial modal toggle
+  const [showHelpModal, setShowHelpModal] = useState(false);
+
+  // Search input element reference for F3 keyboard focusing
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Web Audio synth for instant scanner feedback (Windows 10+ native compatible)
+  const playBeep = (isSuccess = true) => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      oscillator.type = 'sine';
+      
+      if (isSuccess) {
+        oscillator.frequency.setValueAtTime(1200, audioCtx.currentTime); // High pitch retail chirp
+        gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.08); // 80ms duration
+      } else {
+        oscillator.frequency.setValueAtTime(250, audioCtx.currentTime); // Low warning buzz
+        gainNode.gain.setValueAtTime(0.12, audioCtx.currentTime);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.25); // 250ms duration
+      }
+    } catch (e) {
+      console.warn("Could not synth scan beep:", e);
+    }
+  };
+
+  // Global key listener for physical hardware scanners & Windows 10+ POS Keyboard Shortcuts
+  useEffect(() => {
+    let rawKeysBuffer: string[] = [];
+    let keyTimes: number[] = [];
+
+    const handleGlobalKeys = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement as HTMLElement | null;
+      
+      const isInputFocused = activeEl && (
         activeEl.tagName === 'INPUT' || 
         activeEl.tagName === 'TEXTAREA' || 
         activeEl.getAttribute('contenteditable') === 'true'
-      )) {
-        // If it's the barcode manual field, we allow it, but we don't intercept globally to prevent breaking manual typers.
+      );
+
+      // 1. Windows POS Functional Keys Mapping (F1 - F9, Esc)
+      if (e.key === 'F1') {
+        e.preventDefault();
+        setShowHelpModal(prev => !prev);
+        return;
+      }
+      if (e.key === 'F2') {
+        e.preventDefault();
+        if (cart.length > 0) {
+          if (window.confirm("Are you sure you want to clear the active shopping basket? This will reset the checkout terminal.")) {
+            clearCart();
+          }
+        }
+        return;
+      }
+      if (e.key === 'F3') {
+        e.preventDefault();
+        if (searchInputRef.current) {
+          searchInputRef.current.focus();
+          searchInputRef.current.select();
+        }
+        return;
+      }
+      if (e.key === 'F4') {
+        e.preventDefault();
+        setShowScanner(prev => !prev);
+        return;
+      }
+      if (e.key === 'F8') {
+        e.preventDefault();
+        setShowCustomItemForm(prev => !prev);
+        return;
+      }
+      if (e.key === 'F9') {
+        e.preventDefault();
+        if (cart.length > 0) {
+          if (showPrintPreview) {
+            handleCheckoutSubmit();
+          } else {
+            setCheckedItems(true);
+            setCheckedCustomer(true);
+            setCheckedPayment(true);
+            setShowPrintPreview(true);
+          }
+        } else {
+          playBeep(false);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        if (showScanner) {
+          e.preventDefault();
+          setShowScanner(false);
+        } else if (showPrintPreview) {
+          e.preventDefault();
+          setShowPrintPreview(false);
+        } else if (completedSale) {
+          e.preventDefault();
+          clearCart();
+        } else if (showHelpModal) {
+          e.preventDefault();
+          setShowHelpModal(false);
+        }
+        return;
+      }
+
+      // 2. Hardware Wedge Scanner Capture Engine (2000-2026 Wedge Compatibility)
+      // Standard wedge scanners send data at extremely high speeds (<45ms intervals)
+      if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
         return;
       }
 
       const currentTime = Date.now();
-      // Hardware scanners type extremely fast (usually < 30ms between characters)
-      if (currentTime - lastKeyTime > 150) {
-        rawKeysBuffer = ''; // stale buffer, reset
+      const lastKeyTime = keyTimes.length > 0 ? keyTimes[keyTimes.length - 1] : currentTime;
+      const diff = currentTime - lastKeyTime;
+
+      // Reset keyboard scanner buffer if typing speed is human-like (> 65ms between keys)
+      if (keyTimes.length > 0 && diff > 65) {
+        rawKeysBuffer = [];
+        keyTimes = [];
       }
 
-      lastKeyTime = currentTime;
-
-      // Handle standard scan characters
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' || e.key === 'Tab') {
         if (rawKeysBuffer.length >= 3) {
-          handleBarcodeScanned(rawKeysBuffer);
-          rawKeysBuffer = '';
+          // Calculate average typing speed of keystrokes
+          let totalDiff = 0;
+          for (let i = 1; i < keyTimes.length; i++) {
+            totalDiff += (keyTimes[i] - keyTimes[i - 1]);
+          }
+          const avgDelay = keyTimes.length > 1 ? totalDiff / (keyTimes.length - 1) : 0;
+
+          // If typed under 50ms average or block size indicates scanner
+          if (avgDelay < 50 || keyTimes.length > 4) {
+            const scannedCode = rawKeysBuffer.join('').trim();
+            
+            // Intercept standard form submission or search triggered by Enter
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Strip the scanned sequence from active focused inputs to prevent polluting values
+            if (isInputFocused) {
+              const inputEl = activeEl as HTMLInputElement | HTMLTextAreaElement;
+              const val = inputEl.value;
+              if (val.endsWith(scannedCode)) {
+                inputEl.value = val.substring(0, val.length - scannedCode.length);
+              } else if (val.includes(scannedCode)) {
+                inputEl.value = val.replace(scannedCode, '');
+              }
+              // Force React state update
+              const changeEvent = new Event('input', { bubbles: true });
+              inputEl.dispatchEvent(changeEvent);
+            }
+
+            handleBarcodeScanned(scannedCode);
+            rawKeysBuffer = [];
+            keyTimes = [];
+            return;
+          }
         }
-      } else if (e.key.length === 1 && /[0-9a-zA-Z]/.test(e.key)) {
-        rawKeysBuffer += e.key;
+        rawKeysBuffer = [];
+        keyTimes = [];
+      } else if (e.key.length === 1 && /[0-9a-zA-Z\-_]/.test(e.key)) {
+        rawKeysBuffer.push(e.key);
+        keyTimes.push(currentTime);
       }
     };
 
-    window.addEventListener('keydown', handleGlobalKeyPress);
+    window.addEventListener('keydown', handleGlobalKeys, true); // Intercept in capture phase
     return () => {
-      window.removeEventListener('keydown', handleGlobalKeyPress);
+      window.removeEventListener('keydown', handleGlobalKeys, true);
     };
-  }, [products, cart]);
+  }, [products, cart, showScanner, showPrintPreview, completedSale, showHelpModal, paymentMethod, customerName, customerPhone, notes, discountPercent, creditDueDate]);
 
   const handleBarcodeScanned = (scannedCode: string) => {
-    // Find matching product
     const matchingProduct = products.find(p => p.barcode === scannedCode);
     if (matchingProduct) {
       addProductToCart(matchingProduct);
     } else {
+      playBeep(false);
       alert(`Scanned Barcode "${scannedCode}" is not registered in the product catalog yet.`);
     }
   };
 
   const addProductToCart = (product: Product) => {
-    // Check if product is in cart
     const existingIndex = cart.findIndex(item => item.productId === product.id);
     const alreadyInCartQty = existingIndex !== -1 ? cart[existingIndex].quantity : 0;
 
     // Check shelf stock availability
     if (product.retailStock <= alreadyInCartQty) {
-      alert(`Insufficient Retail Shelf Stock! Only ${product.retailStock} units of "${product.name}" are placed on store shelves.`);
+      playBeep(false);
+      alert(`Insufficient Shelf Stock! Only ${product.retailStock} units of "${product.name}" are available on store shelves.`);
       return;
     }
 
+    playBeep(true); // Play successful cash register chime
     if (existingIndex !== -1) {
       const updatedCart = [...cart];
       updatedCart[existingIndex].quantity += 1;
@@ -228,7 +370,39 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
   });
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="checkout-terminal-container">
+    <div className="flex flex-col space-y-4 w-full" id="checkout-terminal-wrapper">
+      {/* WINDOWS 10+ DESKTOP POS STATUS & QUICK SHORTCUTS STRIP */}
+      <div className="flex flex-col md:flex-row items-center justify-between gap-3 bg-slate-900 text-white rounded-xl px-5 py-3 border border-slate-950 shadow-sm print:hidden" id="pos-os-status-bar">
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <div className="flex items-center space-x-2 text-emerald-400 font-bold font-mono bg-slate-950 px-2.5 py-1 rounded-md border border-emerald-950/40">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span>🔌 HARDWARE WEDGE ACTIVE</span>
+          </div>
+          <span className="text-slate-700 hidden md:inline">|</span>
+          <span className="text-slate-300 font-medium font-sans">Compatible with standard barcode scanners (2000-2026)</span>
+        </div>
+        
+        <div className="flex items-center space-x-3 text-[11px] font-mono">
+          <button
+            onClick={() => setShowHelpModal(true)}
+            className="text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-750 px-2.5 py-1 rounded border border-slate-700/50 flex items-center space-x-1 cursor-pointer transition-all"
+            title="Open hardware setup & troubleshooting help"
+          >
+            <HelpCircle className="w-3.5 h-3.5 text-blue-400" />
+            <span>[F1] Help Guide</span>
+          </button>
+          
+          <div className="bg-slate-950 px-3 py-1 rounded border border-slate-850 text-slate-400 flex items-center space-x-1.5 select-none">
+            <Monitor className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-blue-300 font-bold text-[9px] uppercase tracking-wider">Windows 10+ x64 Desktop Mode</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="checkout-terminal-container">
       {/* Left Column: Cart & Checkout Form (cols 7) */}
       <div className="lg:col-span-7 flex flex-col space-y-5" id="cart-workspace">
         
@@ -271,13 +445,14 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
+                ref={searchInputRef}
                 type="text"
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
                   if (showCustomItemForm) setShowCustomItemForm(false);
                 }}
-                placeholder="Search by name, barcode, or category for quick checkout..."
+                placeholder="Search by name, barcode, or category for quick checkout (Press F3)..."
                 className="w-full text-xs pl-9 pr-3 py-2.5 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-900 bg-slate-50/50"
                 id="checkout-search-input"
               />
@@ -830,16 +1005,18 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
         </div>
       )}
 
-      {/* 80MM THERMAL PRINTER - LIVE PRINT PREVIEW MODAL */}
+      {/* THERMAL PRINTER & OFFICE INVOICE - LIVE DRAFT PRINT PREVIEW MODAL */}
       {showPrintPreview && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto animate-fadeIn font-sans" id="print-preview-overlay">
-          <div className="bg-slate-900 rounded-2xl shadow-2xl max-w-md w-full border border-slate-800 overflow-hidden flex flex-col my-8">
+          <div className={`bg-slate-900 rounded-2xl shadow-2xl w-full border border-slate-800 overflow-hidden flex flex-col my-8 transition-all ${
+            printFormat === 'A4' ? 'max-w-2xl' : 'max-w-md'
+          }`}>
             
             {/* Simulated Hardware Terminal Header */}
             <div className="bg-slate-950 px-4 py-3 border-b border-slate-800 flex justify-between items-center text-slate-400 select-none">
               <div className="flex flex-col">
                 <span className="font-mono text-[10px] uppercase tracking-wider text-blue-400 font-bold">POS Terminal Roll Simulator</span>
-                <span className="text-white text-xs font-bold font-sans">80mm Thermal Receipt Preview</span>
+                <span className="text-white text-xs font-bold font-sans">Multi-Format Draft Print Preview</span>
               </div>
               <button 
                 onClick={() => setShowPrintPreview(false)} 
@@ -848,6 +1025,30 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
               >
                 ✕ Close
               </button>
+            </div>
+
+            {/* PRINTER WIDTH FORMAT SELECTOR */}
+            <div className="bg-slate-950/95 px-4 py-2 border-b border-slate-900 flex items-center justify-between text-xs print:hidden">
+              <span className="text-[10px] uppercase font-bold text-slate-500 font-mono flex items-center gap-1">
+                <Printer className="w-3.5 h-3.5 text-blue-500" />
+                <span>Selected Printer:</span>
+              </span>
+              <div className="flex space-x-1 bg-slate-900 p-0.5 rounded border border-slate-800">
+                {(['80mm', '58mm', 'A4'] as const).map((format) => (
+                  <button
+                    type="button"
+                    key={format}
+                    onClick={() => setPrintFormat(format)}
+                    className={`px-2.5 py-1 rounded text-[10px] font-bold font-mono transition-all cursor-pointer ${
+                      printFormat === format
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    {format.toUpperCase()}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Hardware LEDs Bar */}
@@ -870,7 +1071,9 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
                   <span>PAPER</span>
                 </div>
               </div>
-              <span className="bg-slate-950 px-2 py-0.5 rounded text-[9px] text-blue-300 font-bold">80MM COATED ROLL</span>
+              <span className="bg-slate-950 px-2 py-0.5 rounded text-[9px] text-blue-300 font-bold uppercase">
+                {printFormat === '58mm' ? '58mm Mobile Roll' : printFormat === 'A4' ? 'A4 Office Spooler' : '80mm Coated Roll'}
+              </span>
             </div>
 
             {/* Simulated Hardware Paper Feed Outlet Slot */}
@@ -880,126 +1083,299 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
               <span>TEAR BAR ▼</span>
             </div>
 
-            {/* PHYSICAL SCROLLABLE PAPER ROLL */}
+            {/* PHYSICAL SCROLLABLE PAPER ROLL / SHEET CANVAS */}
             <div className="p-4 bg-slate-900 overflow-y-auto max-h-[50vh] flex flex-col items-center">
-              <div 
-                className="bg-[#FCFBF8] text-slate-800 shadow-xl px-5 py-6 w-full max-w-[310px] text-xs font-mono relative transition-transform"
-                style={{ 
-                  boxShadow: '0 10px 25px -5px rgba(0,0,0,0.4), inset 0 0 20px rgba(0,0,0,0.03)',
-                  clipPath: 'polygon(0% 8px, 2.5% 0px, 5% 8px, 7.5% 0px, 10% 8px, 12.5% 0px, 15% 8px, 17.5% 0px, 20% 8px, 22.5% 0px, 25% 8px, 27.5% 0px, 30% 8px, 32.5% 0px, 35% 8px, 37.5% 0px, 40% 8px, 42.5% 0px, 45% 8px, 47.5% 0px, 50% 8px, 52.5% 0px, 55% 8px, 57.5% 0px, 60% 8px, 62.5% 0px, 65% 8px, 67.5% 0px, 70% 8px, 72.5% 0px, 75% 8px, 77.5% 0px, 80% 8px, 82.5% 0px, 85% 8px, 87.5% 0px, 90% 8px, 92.5% 0px, 95% 8px, 97.5% 0px, 100% 8px, 100% calc(100% - 8px), 97.5% 100%, 95% calc(100% - 8px), 92.5% 100%, 90% calc(100% - 8px), 87.5% 100%, 85% calc(100% - 8px), 82.5% 100%, 80% calc(100% - 8px), 77.5% 100%, 75% calc(100% - 8px), 72.5% 100%, 70% calc(100% - 8px), 67.5% 100%, 65% calc(100% - 8px), 62.5% 100%, 60% calc(100% - 8px), 57.5% 100%, 55% calc(100% - 8px), 52.5% 100%, 50% calc(100% - 8px), 47.5% 100%, 45% calc(100% - 8px), 42.5% 100%, 40% calc(100% - 8px), 37.5% 100%, 35% calc(100% - 8px), 32.5% 100%, 30% calc(100% - 8px), 27.5% 100%, 25% calc(100% - 8px), 22.5% 100%, 20% calc(100% - 8px), 17.5% 100%, 15% calc(100% - 8px), 12.5% 100%, 10% calc(100% - 8px), 7.5% 100%, 5% calc(100% - 8px), 2.5% 100%, 0% calc(100% - 8px))'
-                }}
-                id="receipt-preview-paper"
-              >
-                {/* Draft Verification Notice */}
-                <div className="bg-black text-white text-center font-bold px-2 py-1 mb-4 text-[9px] uppercase tracking-widest rounded-xs">
-                  ⚠️ Draft Receipt - Print Preview
-                </div>
+              {printFormat === 'A4' ? (
+                /* =================== A4 INVOICE SHEET DESIGN =================== */
+                <div className="bg-white text-slate-800 shadow-2xl p-8 w-full font-sans border border-slate-200 text-xs rounded-lg text-left" id="receipt-preview-paper">
+                  {/* Watermark Draft Warning */}
+                  <div className="bg-amber-500 text-white text-center font-bold px-3 py-1.5 mb-6 text-[10px] uppercase tracking-widest rounded-md">
+                    ⚠️ PRO-FORMA DRAFT - TRANSACTION NOT BOOKED YET
+                  </div>
 
-                {/* Receipt Header details */}
-                <div className="text-center space-y-1 mb-4">
-                  <h1 className="text-base font-extrabold text-black tracking-wide uppercase font-mono">{settings.storeName}</h1>
-                  <p className="text-[10px] text-slate-600 whitespace-pre-line leading-tight font-mono">{settings.address}</p>
-                  {settings.phone && <p className="text-[10px] text-slate-600 font-mono">Tel: {settings.phone}</p>}
-                  
-                  <div className="h-px border-t border-dashed border-slate-400 my-3"></div>
-                  
-                  <div className="text-[10px] text-left text-slate-700 space-y-0.5 font-mono">
-                    <div><strong>RECEIPT TYPE:</strong> PRE-CHECK PREVIEW</div>
-                    <div><strong>DRAFT DATE:</strong> {new Date().toLocaleString()}</div>
-                    <div><strong>CASHIER:</strong> {activeProfile?.name || 'System Operator'}</div>
-                    <div><strong>CUSTOMER:</strong> {customerName.trim() || 'Walk-in Customer'}</div>
-                    {customerPhone.trim() && (
-                      <div><strong>CUSTOMER TEL:</strong> {customerPhone.trim()}</div>
+                  {/* Corporate Header */}
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h1 className="text-xl font-extrabold text-slate-900 tracking-tight uppercase">{settings.storeName}</h1>
+                      <p className="text-[10px] text-slate-500 whitespace-pre-line leading-tight mt-1">{settings.address}</p>
+                      {settings.phone && <p className="text-[10px] text-slate-500 mt-0.5">Tel: {settings.phone}</p>}
+                    </div>
+                    <div className="text-right">
+                      <h2 className="text-lg font-black text-slate-900 tracking-wider uppercase">Pro-Forma Invoice</h2>
+                      <p className="text-[10px] text-slate-500 font-mono mt-1">NO: PRE-CHECK-DRAFT</p>
+                      <p className="text-[10px] text-slate-500 font-mono">Date: {new Date().toLocaleString()}</p>
+                    </div>
+                  </div>
+
+                  <div className="h-px bg-slate-200 my-4"></div>
+
+                  {/* Billed To / Client Box */}
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div>
+                      <h3 className="font-bold text-slate-400 uppercase tracking-wider text-[9px] mb-1">Billed To / Customer:</h3>
+                      <p className="font-bold text-slate-900">{customerName.trim() || 'Walk-in Customer'}</p>
+                      {customerPhone.trim() && <p className="text-slate-500 font-mono">Phone: {customerPhone.trim()}</p>}
+                    </div>
+                    <div className="text-right">
+                      <h3 className="font-bold text-slate-400 uppercase tracking-wider text-[9px] mb-1">Transaction Details:</h3>
+                      <p className="text-slate-700">Operator: <strong className="font-medium text-slate-900">{activeProfile?.name || 'System Cashier'}</strong></p>
+                      <p className="text-slate-700">Payment Type: <strong className="font-bold text-blue-800 uppercase">{paymentMethod.replace(/_/g, ' ')}</strong></p>
+                      {paymentMethod === 'credit' && (
+                        <p className="text-rose-700 font-bold">Due Date: {new Date(creditDueDate).toLocaleDateString()}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Table */}
+                  <table className="w-full text-left text-xs mt-6 border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-400 text-[9px] font-bold uppercase">
+                        <th className="py-2">No.</th>
+                        <th className="py-2">Item Description</th>
+                        <th className="py-2 text-center">Qty</th>
+                        <th className="py-2 text-right">Unit Price</th>
+                        <th className="py-2 text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {cart.map((item, index) => (
+                        <tr key={item.productId} className="text-slate-800">
+                          <td className="py-2 font-mono text-slate-400 text-[10px]">{index + 1}</td>
+                          <td className="py-2">
+                            <div className="font-bold">{item.productName}</div>
+                            <div className="text-[9px] text-slate-400 font-mono mt-0.5">BC: {item.barcode}</div>
+                          </td>
+                          <td className="py-2 text-center font-mono">{item.quantity}</td>
+                          <td className="py-2 text-right font-mono">{settings.currency}{item.price.toFixed(2)}</td>
+                          <td className="py-2 text-right font-bold font-mono">{settings.currency}{(item.price * item.quantity).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {/* Summary Breakdown */}
+                  <div className="flex justify-end mt-6">
+                    <div className="w-1/2 space-y-1.5 text-xs text-slate-600 border-t border-slate-100 pt-4">
+                      <div className="flex justify-between">
+                        <span>Draft Subtotal:</span>
+                        <span className="font-mono">{settings.currency}{subtotal.toFixed(2)}</span>
+                      </div>
+                      {discountAmount > 0 && (
+                        <div className="flex justify-between text-rose-600 font-semibold">
+                          <span>Discount Applied ({discountPercent}%):</span>
+                          <span className="font-mono">-{settings.currency}{discountAmount.toFixed(2)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span>Tax / VAT ({settings.taxRate}%):</span>
+                        <span className="font-mono">{settings.currency}{taxAmount.toFixed(2)}</span>
+                      </div>
+                      <div className="h-px bg-slate-200 my-1.5"></div>
+                      <div className="flex justify-between text-sm font-bold text-slate-900">
+                        <span>Total Estimate:</span>
+                        <span className="font-mono text-blue-900">{settings.currency}{finalTotal.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Footer signature */}
+                  <div className="mt-10 pt-6 border-t border-slate-100 flex justify-between items-end">
+                    <div className="text-[9px] text-slate-400 space-y-1 w-2/3 leading-normal">
+                      <p>{settings.receiptHeader}</p>
+                      <p>{settings.receiptFooter}</p>
+                    </div>
+                    <div className="text-center w-1/3">
+                      <div className="border-b border-dashed border-slate-300 h-6"></div>
+                      <p className="text-[9px] text-slate-400 uppercase tracking-wider font-bold mt-1">Authorized Cashier</p>
+                    </div>
+                  </div>
+                </div>
+              ) : printFormat === '58mm' ? (
+                /* =================== 58MM NARROW RECEIPT DESIGN =================== */
+                <div 
+                  className="bg-[#FCFBF8] text-slate-800 shadow-xl px-3.5 py-4 w-full max-w-[220px] text-[10px] font-mono relative text-left"
+                  id="receipt-preview-paper"
+                >
+                  <div className="bg-black text-white text-center font-bold px-1.5 py-0.5 mb-2.5 text-[8px] uppercase tracking-wider">
+                    ⚠️ PRO-FORMA DRAFT
+                  </div>
+
+                  <div className="text-center space-y-0.5 mb-3">
+                    <h1 className="text-[11px] font-black text-black uppercase tracking-tight leading-none">{settings.storeName}</h1>
+                    <p className="text-[8px] text-slate-600 whitespace-pre-line leading-none mt-1">{settings.address}</p>
+                    <div className="h-px border-t border-dotted border-slate-400 my-2"></div>
+                    
+                    <div className="text-[8px] text-left text-slate-700 space-y-0.5">
+                      <div><strong>DATE:</strong> {new Date().toLocaleDateString()}</div>
+                      <div><strong>OP:</strong> {activeProfile?.name || 'Cashier'}</div>
+                      <div><strong>CUST:</strong> {customerName.trim() || 'Walk-in'}</div>
+                    </div>
+                    <div className="h-px border-t border-dotted border-slate-400 my-2"></div>
+                  </div>
+
+                  <table className="w-full text-left text-[9px] mb-2">
+                    <thead>
+                      <tr className="border-b border-dotted border-slate-400 text-slate-600">
+                        <th className="pb-0.5 font-bold">Item</th>
+                        <th className="pb-0.5 text-center font-bold">Qty</th>
+                        <th className="pb-0.5 text-right font-bold">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cart.map((item) => (
+                        <tr key={item.productId} className="text-black">
+                          <td className="py-0.5 truncate max-w-[90px]">{item.productName}</td>
+                          <td className="py-0.5 text-center">{item.quantity}</td>
+                          <td className="py-0.5 text-right">{settings.currency}{(item.price * item.quantity).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  <div className="text-[9px] space-y-1 border-t border-dotted border-slate-400 pt-1.5 mb-2 text-black">
+                    <div className="flex justify-between">
+                      <span>SUBTOTAL</span>
+                      <span>{settings.currency}{subtotal.toFixed(2)}</span>
+                    </div>
+                    {discountAmount > 0 && (
+                      <div className="flex justify-between text-rose-700 font-bold">
+                        <span>DISCOUNT</span>
+                        <span>-{settings.currency}{discountAmount.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span>TAX VAT ({settings.taxRate}%)</span>
+                      <span>{settings.currency}{taxAmount.toFixed(2)}</span>
+                    </div>
+                    <div className="h-px border-t border-dotted border-slate-400 my-0.5"></div>
+                    <div className="flex justify-between text-[11px] font-black">
+                      <span>GRAND TOTAL</span>
+                      <span>{settings.currency}{finalTotal.toFixed(2)}</span>
+                    </div>
+                  </div>
+
+                  <div className="text-center text-[8px] text-slate-500 space-y-0.5 border-t border-dotted border-slate-300 pt-2 leading-normal">
+                    <p>{settings.receiptHeader}</p>
+                    <p>{settings.receiptFooter}</p>
+                  </div>
+                </div>
+              ) : (
+                /* =================== 80MM STANDARD RECEIPT DESIGN =================== */
+                <div 
+                  className="bg-[#FCFBF8] text-slate-800 shadow-xl px-5 py-6 w-full max-w-[310px] text-xs font-mono relative text-left"
+                  id="receipt-preview-paper"
+                >
+                  {/* Draft Verification Notice */}
+                  <div className="bg-black text-white text-center font-bold px-2 py-1 mb-4 text-[9px] uppercase tracking-widest rounded-xs">
+                    ⚠️ Draft Receipt - Print Preview
+                  </div>
+
+                  {/* Receipt Header details */}
+                  <div className="text-center space-y-1 mb-4">
+                    <h1 className="text-base font-extrabold text-black tracking-wide uppercase font-mono">{settings.storeName}</h1>
+                    <p className="text-[10px] text-slate-600 whitespace-pre-line leading-tight font-mono">{settings.address}</p>
+                    {settings.phone && <p className="text-[10px] text-slate-600 font-mono">Tel: {settings.phone}</p>}
+                    
+                    <div className="h-px border-t border-dashed border-slate-400 my-3"></div>
+                    
+                    <div className="text-[10px] text-left text-slate-700 space-y-0.5 font-mono">
+                      <div><strong>RECEIPT TYPE:</strong> PRE-CHECK PREVIEW</div>
+                      <div><strong>DRAFT DATE:</strong> {new Date().toLocaleString()}</div>
+                      <div><strong>CASHIER:</strong> {activeProfile?.name || 'System Operator'}</div>
+                      <div><strong>CUSTOMER:</strong> {customerName.trim() || 'Walk-in Customer'}</div>
+                      {customerPhone.trim() && (
+                        <div><strong>CUSTOMER TEL:</strong> {customerPhone.trim()}</div>
+                      )}
+                    </div>
+                    
+                    <div className="h-px border-t border-dashed border-slate-400 my-3"></div>
+                  </div>
+
+                  {/* Items detailed lists */}
+                  <table className="w-full text-left font-mono text-[11px] mb-4">
+                    <thead>
+                      <tr className="border-b border-dashed border-slate-400 text-slate-600">
+                        <th className="pb-1 font-bold">Item</th>
+                        <th className="pb-1 text-center font-bold">Qty</th>
+                        <th className="pb-1 text-right font-bold">Price</th>
+                        <th className="pb-1 text-right font-bold">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cart.map((item) => (
+                        <tr key={item.productId} className="text-black hover:bg-slate-50">
+                          <td className="py-1.5 max-w-[120px] truncate">{item.productName}</td>
+                          <td className="py-1.5 text-center">{item.quantity}</td>
+                          <td className="py-1.5 text-right">{settings.currency}{item.price.toFixed(2)}</td>
+                          <td className="py-1.5 text-right">{settings.currency}{(item.price * item.quantity).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {/* Totals Breakdown section */}
+                  <div className="font-mono text-[11px] space-y-1.5 border-t border-dashed border-slate-400 pt-3 mb-4 text-black">
+                    <div className="flex justify-between">
+                      <span>SUBTOTAL</span>
+                      <span>{settings.currency}{subtotal.toFixed(2)}</span>
+                    </div>
+                    {discountAmount > 0 && (
+                      <div className="flex justify-between text-rose-700 font-semibold">
+                        <span>DISCOUNT ({discountPercent}%)</span>
+                        <span>-{settings.currency}{discountAmount.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span>TAX VAT ({settings.taxRate}%)</span>
+                      <span>{settings.currency}{taxAmount.toFixed(2)}</span>
+                    </div>
+                    <div className="h-px border-t border-dashed border-slate-400 my-1"></div>
+                    <div className="flex justify-between text-xs font-bold">
+                      <span>GRAND TOTAL</span>
+                      <span>{settings.currency}{finalTotal.toFixed(2)}</span>
+                    </div>
+                    <div className="h-px border-t border-dashed border-slate-400 my-1"></div>
+                    <div className="flex justify-between text-[10px] text-slate-600 font-semibold uppercase">
+                      <span>PROPOSED PAY METHOD</span>
+                      <span>{paymentMethod.replace(/_/g, ' ')}</span>
+                    </div>
+                    {paymentMethod === 'credit' && (
+                      <div className="flex justify-between text-[10px] text-blue-800 font-bold">
+                        <span>DUE DATE</span>
+                        <span>{new Date(creditDueDate).toLocaleDateString()}</span>
+                      </div>
+                    )}
+                    {notes.trim() && (
+                      <div className="text-[10px] text-slate-500 border border-slate-200 p-1.5 rounded bg-slate-50/50 mt-2 font-sans italic">
+                        <strong>Notes:</strong> "{notes.trim()}"
+                      </div>
                     )}
                   </div>
-                  
-                  <div className="h-px border-t border-dashed border-slate-400 my-3"></div>
-                </div>
 
-                {/* Items detailed lists */}
-                <table className="w-full text-left font-mono text-[11px] mb-4">
-                  <thead>
-                    <tr className="border-b border-dashed border-slate-400 text-slate-600">
-                      <th className="pb-1 font-bold">Item</th>
-                      <th className="pb-1 text-center font-bold">Qty</th>
-                      <th className="pb-1 text-right font-bold">Price</th>
-                      <th className="pb-1 text-right font-bold">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cart.map((item) => (
-                      <tr key={item.productId} className="text-black hover:bg-slate-50">
-                        <td className="py-1.5 max-w-[120px] truncate">{item.productName}</td>
-                        <td className="py-1.5 text-center">{item.quantity}</td>
-                        <td className="py-1.5 text-right">{settings.currency}{item.price.toFixed(2)}</td>
-                        <td className="py-1.5 text-right">{settings.currency}{(item.price * item.quantity).toFixed(2)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-
-                {/* Totals Breakdown section */}
-                <div className="font-mono text-[11px] space-y-1.5 border-t border-dashed border-slate-400 pt-3 mb-4 text-black">
-                  <div className="flex justify-between">
-                    <span>SUBTOTAL</span>
-                    <span>{settings.currency}{subtotal.toFixed(2)}</span>
-                  </div>
-                  {discountAmount > 0 && (
-                    <div className="flex justify-between text-rose-700 font-semibold">
-                      <span>DISCOUNT ({discountPercent}%)</span>
-                      <span>-{settings.currency}{discountAmount.toFixed(2)}</span>
+                  {/* Barcode in CSS */}
+                  <div className="py-3 border-t border-dashed border-slate-300">
+                    <div className="flex justify-center" title="Pre-Check ID Code">
+                      <div className="flex h-10 items-end space-x-[1px]">
+                        {[2,1,3,1,2,4,1,2,1,3,2,1,4,1,2,3,1,2,1,4,1,2,1,3,2,1].map((w, i) => (
+                          <div key={i} className="bg-black" style={{ width: `${w}px`, height: '100%' }}></div>
+                        ))}
+                      </div>
                     </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span>TAX VAT ({settings.taxRate}%)</span>
-                    <span>{settings.currency}{taxAmount.toFixed(2)}</span>
-                  </div>
-                  <div className="h-px border-t border-dashed border-slate-400 my-1"></div>
-                  <div className="flex justify-between text-xs font-bold">
-                    <span>GRAND TOTAL</span>
-                    <span>{settings.currency}{finalTotal.toFixed(2)}</span>
-                  </div>
-                  <div className="h-px border-t border-dashed border-slate-400 my-1"></div>
-                  <div className="flex justify-between text-[10px] text-slate-600 font-semibold uppercase">
-                    <span>PROPOSED PAY METHOD</span>
-                    <span>{paymentMethod.replace(/_/g, ' ')}</span>
-                  </div>
-                  {paymentMethod === 'credit' && (
-                    <div className="flex justify-between text-[10px] text-blue-800 font-bold">
-                      <span>DUE DATE</span>
-                      <span>{new Date(creditDueDate).toLocaleDateString()}</span>
-                    </div>
-                  )}
-                  {notes.trim() && (
-                    <div className="text-[10px] text-slate-500 border border-slate-200 p-1.5 rounded bg-slate-50/50 mt-2 font-sans italic">
-                      <strong>Notes:</strong> "{notes.trim()}"
-                    </div>
-                  )}
-                </div>
-
-                {/* Barcode in CSS */}
-                <div className="py-3 border-t border-dashed border-slate-300">
-                  <div className="flex justify-center" title="Pre-Check ID Code">
-                    <div className="flex h-10 items-end space-x-[1px]">
-                      {[2,1,3,1,2,4,1,2,1,3,2,1,4,1,2,3,1,2,1,4,1,2,1,3,2,1].map((w, i) => (
-                        <div key={i} className="bg-black" style={{ width: `${w}px`, height: '100%' }}></div>
-                      ))}
+                    <div className="text-center text-[9px] text-slate-500 font-mono mt-1 tracking-widest">
+                      *PRE-VERIFY-DRAFT*
                     </div>
                   </div>
-                  <div className="text-center text-[9px] text-slate-500 font-mono mt-1 tracking-widest">
-                    *PRE-VERIFY-DRAFT*
+
+                  {/* Footnotes */}
+                  <div className="text-center font-mono text-[9px] text-slate-500 space-y-1 mt-2 leading-relaxed">
+                    <p className="whitespace-pre-line">{settings.receiptHeader}</p>
+                    <p className="whitespace-pre-line font-bold">--- NOT A LEGAL FISCAL RECEIPT ---</p>
                   </div>
                 </div>
-
-                {/* Footnotes */}
-                <div className="text-center font-mono text-[9px] text-slate-500 space-y-1 mt-2 leading-relaxed">
-                  <p className="whitespace-pre-line">{settings.receiptHeader}</p>
-                  <p className="whitespace-pre-line font-bold">--- NOT A LEGAL FISCAL RECEIPT ---</p>
-                </div>
-              </div>
+              )}
             </div>
 
-            {/* INTEGRATED OPERATOR PRE-FLIGHT CHECKLIST (Bypasses errors & increases cashier accuracy) */}
+            {/* INTEGRATED OPERATOR PRE-FLIGHT CHECKLIST */}
             <div className="bg-slate-950/50 p-4 border-t border-slate-800 space-y-3">
               <div className="flex items-center space-x-1.5 text-blue-400">
                 <span className="text-xs">🛡️</span>
@@ -1027,7 +1403,7 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
                     className="rounded border-slate-700 bg-slate-950 text-blue-500 focus:ring-0 mt-0.5 w-4.5 h-4.5 cursor-pointer"
                   />
                   <span className="leading-tight text-[11px] font-medium text-slate-300">
-                    Confirm customer identification details are typed correctly: <strong className="text-white font-semibold">{customerName.trim() || 'Walk-in Customer'}</strong>
+                    Confirm customer identity matches: <strong className="text-white font-semibold">{customerName.trim() || 'Walk-in Customer'}</strong>
                   </span>
                 </label>
 
@@ -1074,7 +1450,7 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
                 }`}
               >
                 <CheckCircle className="w-4 h-4" />
-                <span>Confirm & Print Roll</span>
+                <span>Confirm & Save (F9)</span>
               </button>
             </div>
           </div>
@@ -1084,7 +1460,9 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
       {/* COMPLETED CHECKOUT RECEIPT PREVIEW MODAL */}
       {completedSale && (
         <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto animate-fadeIn font-sans" id="receipt-modal-overlay">
-          <div className="bg-slate-900 rounded-2xl shadow-2xl max-w-md w-full border border-slate-800 overflow-hidden flex flex-col my-8">
+          <div className={`bg-slate-900 rounded-2xl shadow-2xl w-full border border-slate-800 overflow-hidden flex flex-col my-8 transition-all ${
+            printFormat === 'A4' ? 'max-w-2xl' : 'max-w-md'
+          }`}>
             
             {/* Completed Header */}
             <div className="bg-slate-950 px-4 py-3 border-b border-slate-800 flex justify-between items-center text-slate-400 print:hidden select-none">
@@ -1093,6 +1471,7 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
                 <span className="text-white text-xs font-bold">Physical Thermal Receipt Issued</span>
               </div>
               <button 
+                type="button"
                 onClick={clearCart} 
                 className="text-slate-500 hover:text-white font-semibold text-xs cursor-pointer p-1"
                 id="close-receipt-modal-x"
@@ -1101,163 +1480,376 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
               </button>
             </div>
 
+            {/* PRINTER WIDTH FORMAT SELECTOR */}
+            <div className="bg-slate-950/95 px-4 py-2 border-b border-slate-900 flex items-center justify-between text-xs print:hidden">
+              <span className="text-[10px] uppercase font-bold text-slate-500 font-mono flex items-center gap-1">
+                <Printer className="w-3.5 h-3.5 text-blue-500" />
+                <span>Selected Printer:</span>
+              </span>
+              <div className="flex space-x-1 bg-slate-900 p-0.5 rounded border border-slate-800">
+                {(['80mm', '58mm', 'A4'] as const).map((format) => (
+                  <button
+                    type="button"
+                    key={format}
+                    onClick={() => setPrintFormat(format)}
+                    className={`px-2.5 py-1 rounded text-[10px] font-bold font-mono transition-all cursor-pointer ${
+                      printFormat === format
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                    }`}
+                  >
+                    {format.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* LEDs Status */}
-            <div className="bg-slate-900/90 border-b border-slate-950 px-5 py-2.5 flex items-center justify-between text-[10px] text-slate-400 font-mono print:hidden">
+            <div className="bg-slate-900 border-b border-slate-950 px-5 py-2 flex items-center justify-between text-[10px] text-slate-400 font-mono print:hidden">
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-1.5">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse border border-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
-                  <span className="text-slate-300 font-semibold">POWER</span>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse border border-emerald-400"></div>
+                  <span className="text-slate-300">POWER</span>
                 </div>
                 <div className="flex items-center space-x-1.5">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 border border-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.8)]"></div>
-                  <span className="text-slate-300 font-semibold">ONLINE</span>
-                </div>
-                <div className="flex items-center space-x-1.5">
-                  <div className="w-2 h-2 rounded-full bg-slate-700"></div>
-                  <span>ERROR</span>
-                </div>
-                <div className="flex items-center space-x-1.5">
-                  <div className="w-2 h-2 rounded-full bg-slate-700"></div>
-                  <span>PAPER</span>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 border border-emerald-400"></div>
+                  <span className="text-slate-300">ONLINE</span>
                 </div>
               </div>
-              <span className="bg-slate-950 px-2 py-0.5 rounded text-[9px] text-emerald-300 font-bold">80MM ORIGINAL PRINT</span>
+              <span className="text-[9px] bg-slate-950 px-2 py-0.5 rounded text-blue-300 font-bold uppercase">
+                {printFormat === '58mm' ? '58mm Mobile Roll' : printFormat === 'A4' ? 'A4 Office Spooler' : '80mm Coated Roll'}
+              </span>
             </div>
 
-            {/* Paper slot cut line */}
-            <div className="bg-gradient-to-b from-slate-950 to-slate-900 h-4 border-b border-slate-950 flex justify-between items-center px-6 text-[8px] text-slate-600 font-mono print:hidden select-none">
-              <span>▼ THERMAL HEAD</span>
-              <span>FEED SLOT</span>
-              <span>TEAR BAR ▼</span>
+            {/* Simulated Paper Outlet */}
+            <div className="bg-gradient-to-b from-slate-950 to-slate-900 h-3 border-b border-slate-950 flex justify-between items-center px-6 text-[8px] text-slate-600 font-mono select-none print:hidden">
+              <span>▼ THERMAL TEAR</span>
+              <span>READY</span>
+              <span>SLOT ▼</span>
             </div>
 
-            {/* REALISTIC SCROLLABLE PHYSICAL PAPER ROLL FOR FINAL PRINT */}
-            <div className="p-4 bg-slate-900 overflow-y-auto max-h-[55vh] flex flex-col items-center" id="receipt-print-area">
-              <div 
-                className="bg-[#FCFBF8] text-slate-800 shadow-xl px-5 py-6 w-full max-w-[310px] text-xs font-mono relative transition-transform"
-                style={{ 
-                  boxShadow: '0 10px 25px -5px rgba(0,0,0,0.4), inset 0 0 20px rgba(0,0,0,0.03)',
-                  clipPath: 'polygon(0% 8px, 2.5% 0px, 5% 8px, 7.5% 0px, 10% 8px, 12.5% 0px, 15% 8px, 17.5% 0px, 20% 8px, 22.5% 0px, 25% 8px, 27.5% 0px, 30% 8px, 32.5% 0px, 35% 8px, 37.5% 0px, 40% 8px, 42.5% 0px, 45% 8px, 47.5% 0px, 50% 8px, 52.5% 0px, 55% 8px, 57.5% 0px, 60% 8px, 62.5% 0px, 65% 8px, 67.5% 0px, 70% 8px, 72.5% 0px, 75% 8px, 77.5% 0px, 80% 8px, 82.5% 0px, 85% 8px, 87.5% 0px, 90% 8px, 92.5% 0px, 95% 8px, 97.5% 0px, 100% 8px, 100% calc(100% - 8px), 97.5% 100%, 95% calc(100% - 8px), 92.5% 100%, 90% calc(100% - 8px), 87.5% 100%, 85% calc(100% - 8px), 82.5% 100%, 80% calc(100% - 8px), 77.5% 100%, 75% calc(100% - 8px), 72.5% 100%, 70% calc(100% - 8px), 67.5% 100%, 65% calc(100% - 8px), 62.5% 100%, 60% calc(100% - 8px), 57.5% 100%, 55% calc(100% - 8px), 52.5% 100%, 50% calc(100% - 8px), 47.5% 100%, 45% calc(100% - 8px), 42.5% 100%, 40% calc(100% - 8px), 37.5% 100%, 35% calc(100% - 8px), 32.5% 100%, 30% calc(100% - 8px), 27.5% 100%, 25% calc(100% - 8px), 22.5% 100%, 20% calc(100% - 8px), 17.5% 100%, 15% calc(100% - 8px), 12.5% 100%, 10% calc(100% - 8px), 7.5% 100%, 5% calc(100% - 8px), 2.5% 100%, 0% calc(100% - 8px))'
-                }}
-              >
-                {/* Store Header details */}
-                <div className="text-center space-y-1 mb-4">
-                  <h1 className="text-base font-extrabold text-black tracking-wide uppercase font-mono">{settings.storeName}</h1>
-                  <p className="text-[10px] text-slate-600 whitespace-pre-line leading-tight font-mono">{settings.address}</p>
-                  {settings.phone && <p className="text-[10px] text-slate-600 font-mono">Tel: {settings.phone}</p>}
-                  
-                  <div className="h-px border-t border-dashed border-slate-400 my-3"></div>
-                  
-                  <div className="text-[10px] text-left text-slate-700 space-y-0.5 font-mono">
-                    <div><strong>RECEIPT #:</strong> {completedSale.id}</div>
-                    <div><strong>DATE:</strong> {new Date(completedSale.timestamp).toLocaleString()}</div>
-                    <div><strong>CASHIER:</strong> {completedSale.cashierName || 'System Operator'}</div>
-                    <div><strong>CUSTOMER:</strong> {completedSale.customerName}</div>
-                    {completedSale.customerPhone && completedSale.customerPhone !== 'N/A' && (
-                      <div><strong>CUSTOMER TEL:</strong> {completedSale.customerPhone}</div>
-                    )}
+            {/* PHYSICAL SCROLLABLE PAPER ROLL / SHEET CANVAS */}
+            <div className="p-4 bg-slate-900 overflow-y-auto max-h-[50vh] flex flex-col items-center">
+              {printFormat === 'A4' ? (
+                /* =================== A4 COMPLETED INVOICE DESIGN =================== */
+                <div className="bg-white text-slate-800 shadow-2xl p-8 w-full font-sans border border-slate-200 text-xs rounded-lg text-left animate-fadeIn" id="receipt-print-area">
+                  {/* Watermark Paid Warning */}
+                  <div className="bg-emerald-600 text-white text-center font-bold px-3 py-1.5 mb-6 text-[10px] uppercase tracking-widest rounded-md print:hidden">
+                    ✓ SECURE TRANSACTION BOOKED & PAID
                   </div>
-                  
-                  <div className="h-px border-t border-dashed border-slate-400 my-3"></div>
-                </div>
 
-                {/* Items detailed lists */}
-                <table className="w-full text-left font-mono text-[11px] mb-4">
-                  <thead>
-                    <tr className="border-b border-dashed border-slate-400 text-slate-600">
-                      <th className="pb-1 font-bold">Item</th>
-                      <th className="pb-1 text-center font-bold">Qty</th>
-                      <th className="pb-1 text-right font-bold">Price</th>
-                      <th className="pb-1 text-right font-bold">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {completedSale.items.map((item) => (
-                      <tr key={item.productId} className="text-black">
-                        <td className="py-1.5 max-w-[120px] truncate">{item.productName}</td>
-                        <td className="py-1.5 text-center">{item.quantity}</td>
-                        <td className="py-1.5 text-right">{settings.currency}{item.price.toFixed(2)}</td>
-                        <td className="py-1.5 text-right">{settings.currency}{(item.price * item.quantity).toFixed(2)}</td>
+                  {/* Corporate Header */}
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h1 className="text-xl font-extrabold text-slate-900 tracking-tight uppercase">{settings.storeName}</h1>
+                      <p className="text-[10px] text-slate-500 whitespace-pre-line leading-tight mt-1">{settings.address}</p>
+                      {settings.phone && <p className="text-[10px] text-slate-500 mt-0.5">Tel: {settings.phone}</p>}
+                    </div>
+                    <div className="text-right">
+                      <h2 className="text-lg font-black text-slate-900 tracking-wider uppercase">Official Tax Invoice</h2>
+                      <p className="text-[10px] text-slate-500 font-mono mt-1">NO: #{completedSale.id.substring(0, 14).toUpperCase()}</p>
+                      <p className="text-[10px] text-slate-500 font-mono">Date: {new Date(completedSale.timestamp).toLocaleString()}</p>
+                    </div>
+                  </div>
+
+                  <div className="h-px bg-slate-200 my-4"></div>
+
+                  {/* Billed To / Client Box */}
+                  <div className="grid grid-cols-2 gap-4 text-xs">
+                    <div>
+                      <h3 className="font-bold text-slate-400 uppercase tracking-wider text-[9px] mb-1">Billed To / Customer:</h3>
+                      <p className="font-bold text-slate-900">{completedSale.customerName.trim() || 'Walk-in Customer'}</p>
+                      {completedSale.customerPhone && completedSale.customerPhone !== 'N/A' && (
+                        <p className="text-slate-500 font-mono">Phone: {completedSale.customerPhone}</p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <h3 className="font-bold text-slate-400 uppercase tracking-wider text-[9px] mb-1">Transaction Details:</h3>
+                      <p className="text-slate-700">Operator: <strong className="font-medium text-slate-900">{completedSale.cashierName || 'System Cashier'}</strong></p>
+                      <p className="text-slate-700">Payment Type: <strong className="font-bold text-emerald-800 uppercase">{completedSale.paymentMethod.replace(/_/g, ' ')}</strong></p>
+                      {completedSale.paymentMethod === 'credit' && completedSale.dueDate && (
+                        <p className="text-rose-700 font-bold">Due Date: {new Date(completedSale.dueDate).toLocaleDateString()}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Table */}
+                  <table className="w-full text-left text-xs mt-6 border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-400 text-[9px] font-bold uppercase">
+                        <th className="py-2">No.</th>
+                        <th className="py-2">Item Description</th>
+                        <th className="py-2 text-center">Qty</th>
+                        <th className="py-2 text-right">Unit Price</th>
+                        <th className="py-2 text-right">Total</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {completedSale.items.map((item, index) => (
+                        <tr key={item.productId} className="text-slate-800">
+                          <td className="py-2 font-mono text-slate-400 text-[10px]">{index + 1}</td>
+                          <td className="py-2">
+                            <div className="font-bold">{item.productName}</div>
+                            <div className="text-[9px] text-slate-400 font-mono mt-0.5">BC: {item.barcode}</div>
+                          </td>
+                          <td className="py-2 text-center font-mono">{item.quantity}</td>
+                          <td className="py-2 text-right font-mono">{settings.currency}{item.price.toFixed(2)}</td>
+                          <td className="py-2 text-right font-bold font-mono">{settings.currency}{(item.price * item.quantity).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
 
-                {/* Totals breakdown */}
-                <div className="font-mono text-[11px] space-y-1.5 border-t border-dashed border-slate-400 pt-3 mb-4 text-black">
-                  <div className="flex justify-between">
-                    <span>SUBTOTAL</span>
-                    <span>{settings.currency}{completedSale.subtotal.toFixed(2)}</span>
-                  </div>
-                  {completedSale.discount > 0 && (
-                    <div className="flex justify-between text-rose-700 font-semibold">
-                      <span>DISCOUNT APPLIED</span>
-                      <span>-{settings.currency}{completedSale.discount.toFixed(2)}</span>
+                  {/* Summary Breakdown */}
+                  <div className="flex justify-end mt-6">
+                    <div className="w-1/2 space-y-1.5 text-xs text-slate-600 border-t border-slate-100 pt-4">
+                      <div className="flex justify-between">
+                        <span>Invoice Subtotal:</span>
+                        <span className="font-mono">{settings.currency}{completedSale.subtotal.toFixed(2)}</span>
+                      </div>
+                      {completedSale.discount > 0 && (
+                        <div className="flex justify-between text-rose-600 font-semibold">
+                          <span>Discount Applied:</span>
+                          <span className="font-mono">-{settings.currency}{completedSale.discount.toFixed(2)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span>Tax / VAT ({settings.taxRate}%):</span>
+                        <span className="font-mono">{settings.currency}{completedSale.tax.toFixed(2)}</span>
+                      </div>
+                      <div className="h-px bg-slate-200 my-1.5"></div>
+                      <div className="flex justify-between text-sm font-bold text-slate-900">
+                        <span>Grand Total Paid:</span>
+                        <span className="font-mono text-blue-900">{settings.currency}{completedSale.total.toFixed(2)}</span>
+                      </div>
                     </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span>TAX VAT ({settings.taxRate}%)</span>
-                    <span>{settings.currency}{completedSale.tax.toFixed(2)}</span>
                   </div>
-                  <div className="h-px border-t border-dashed border-slate-400 my-1"></div>
-                  <div className="flex justify-between text-xs font-bold">
-                    <span>GRAND TOTAL</span>
-                    <span>{settings.currency}{completedSale.total.toFixed(2)}</span>
-                  </div>
-                  <div className="h-px border-t border-dashed border-slate-400 my-1"></div>
-                  <div className="flex justify-between text-[10px] text-slate-600 font-semibold uppercase">
-                    <span>PAID BY</span>
-                    <span>{completedSale.paymentMethod.replace(/_/g, ' ')}</span>
-                  </div>
-                  {completedSale.paymentMethod === 'credit' && completedSale.dueDate && (
-                    <div className="flex justify-between text-[10px] text-blue-800 font-bold">
-                      <span>DUE DATE</span>
-                      <span>{new Date(completedSale.dueDate).toLocaleDateString()}</span>
-                    </div>
-                  )}
-                  {completedSale.notes && (
-                    <div className="text-[10px] text-slate-500 border border-slate-200 p-1.5 rounded bg-slate-50/50 mt-2 font-sans italic">
-                      <strong>Notes:</strong> "{completedSale.notes}"
-                    </div>
-                  )}
-                </div>
 
-                {/* Barcode in CSS */}
-                <div className="py-3 border-t border-dashed border-slate-300">
-                  <div className="flex justify-center" title="Pre-Check ID Code">
-                    <div className="flex h-10 items-end space-x-[1px]">
-                      {[2,1,3,1,2,4,1,2,1,3,2,1,4,1,2,3,1,2,1,4,1,2,1,3,2,1].map((w, i) => (
+                  {/* Barcode block */}
+                  <div className="mt-8 py-4 border-t border-b border-dashed border-slate-200 flex flex-col items-center justify-center">
+                    <div className="flex h-8 items-end space-x-[1px]">
+                      {[1,3,1,2,4,1,2,1,3,2,1,4,1,2,3,1,2,1,4,1,2,1,3,2,1,1,2,4].map((w, i) => (
                         <div key={i} className="bg-black" style={{ width: `${w}px`, height: '100%' }}></div>
                       ))}
                     </div>
+                    <span className="text-[8px] font-mono tracking-widest mt-1 text-slate-500">*{completedSale.id}*</span>
                   </div>
-                  <div className="text-center text-[9px] text-slate-500 font-mono mt-1 tracking-widest">
-                    *{completedSale.id}*
-                  </div>
-                </div>
 
-                {/* Footnotes */}
-                <div className="text-center font-mono text-[9px] text-slate-500 space-y-1.5 mt-2 leading-relaxed">
-                  <p className="whitespace-pre-line">{settings.receiptHeader}</p>
-                  <div className="h-px border-t border-slate-300 w-1/3 mx-auto"></div>
-                  <p className="whitespace-pre-line">{settings.receiptFooter}</p>
+                  {/* Footer signature */}
+                  <div className="mt-8 pt-4 flex justify-between items-end">
+                    <div className="text-[9px] text-slate-400 space-y-1 w-2/3 leading-normal">
+                      <p>{settings.receiptHeader}</p>
+                      <p>{settings.receiptFooter}</p>
+                    </div>
+                    <div className="text-center w-1/3">
+                      <div className="border-b border-dashed border-slate-300 h-6"></div>
+                      <p className="text-[9px] text-slate-400 uppercase tracking-wider font-bold mt-1">Authorized Cashier</p>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              ) : printFormat === '58mm' ? (
+                /* =================== 58MM COMPLETED RECEIPT DESIGN =================== */
+                <div 
+                  className="bg-[#FCFBF8] text-slate-800 shadow-xl px-3.5 py-4 w-full max-w-[220px] text-[10px] font-mono relative text-left animate-fadeIn"
+                  id="receipt-print-area"
+                >
+                  <div className="bg-black text-white text-center font-bold px-1.5 py-0.5 mb-2.5 text-[8px] uppercase tracking-wider">
+                    ✓ SECURE PAID RECEIPT
+                  </div>
+
+                  <div className="text-center space-y-0.5 mb-3">
+                    <h1 className="text-[11px] font-black text-black uppercase tracking-tight leading-none">{settings.storeName}</h1>
+                    <p className="text-[8px] text-slate-600 whitespace-pre-line leading-none mt-1">{settings.address}</p>
+                    <div className="h-px border-t border-dotted border-slate-400 my-2"></div>
+                    
+                    <div className="text-[8px] text-left text-slate-700 space-y-0.5">
+                      <div><strong>ID:</strong> {completedSale.id.substring(0, 12).toUpperCase()}</div>
+                      <div><strong>DATE:</strong> {new Date(completedSale.timestamp).toLocaleDateString()}</div>
+                      <div><strong>OP:</strong> {completedSale.cashierName || 'Cashier'}</div>
+                      <div><strong>CUST:</strong> {completedSale.customerName || 'Walk-in'}</div>
+                    </div>
+                    <div className="h-px border-t border-dotted border-slate-400 my-2"></div>
+                  </div>
+
+                  <table className="w-full text-left text-[9px] mb-2">
+                    <thead>
+                      <tr className="border-b border-dotted border-slate-400 text-slate-600">
+                        <th className="pb-0.5 font-bold">Item</th>
+                        <th className="pb-0.5 text-center font-bold">Qty</th>
+                        <th className="pb-0.5 text-right font-bold">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {completedSale.items.map((item) => (
+                        <tr key={item.productId} className="text-black">
+                          <td className="py-0.5 truncate max-w-[90px]">{item.productName}</td>
+                          <td className="py-0.5 text-center">{item.quantity}</td>
+                          <td className="py-0.5 text-right">{settings.currency}{(item.price * item.quantity).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  <div className="text-[9px] space-y-1 border-t border-dotted border-slate-400 pt-1.5 mb-2 text-black">
+                    <div className="flex justify-between">
+                      <span>SUBTOTAL</span>
+                      <span>{settings.currency}{completedSale.subtotal.toFixed(2)}</span>
+                    </div>
+                    {completedSale.discount > 0 && (
+                      <div className="flex justify-between text-rose-700 font-bold">
+                        <span>DISCOUNT</span>
+                        <span>-{settings.currency}{completedSale.discount.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span>TAX VAT ({settings.taxRate}%)</span>
+                      <span>{settings.currency}{completedSale.tax.toFixed(2)}</span>
+                    </div>
+                    <div className="h-px border-t border-dotted border-slate-400 my-0.5"></div>
+                    <div className="flex justify-between text-[11px] font-black">
+                      <span>GRAND TOTAL</span>
+                      <span>{settings.currency}{completedSale.total.toFixed(2)}</span>
+                    </div>
+                  </div>
+
+                  {/* Micro Barcode */}
+                  <div className="py-2 border-t border-dotted border-slate-300 flex flex-col items-center">
+                    <div className="flex h-6 items-end space-x-[1px]">
+                      {[1,2,3,1,2,1,3,1,1,2,3,2,1,1].map((w, i) => (
+                        <div key={i} className="bg-black" style={{ width: `${w}px`, height: '100%' }}></div>
+                      ))}
+                    </div>
+                    <span className="text-[7px] text-slate-500 font-mono mt-0.5">#{completedSale.id.substring(0,8)}</span>
+                  </div>
+
+                  <div className="text-center text-[8px] text-slate-500 space-y-0.5 border-t border-dotted border-slate-300 pt-2 leading-normal">
+                    <p>{settings.receiptHeader}</p>
+                    <p>{settings.receiptFooter}</p>
+                  </div>
+                </div>
+              ) : (
+                /* =================== 80MM STANDARD COMPLETED RECEIPT DESIGN =================== */
+                <div 
+                  className="bg-[#FCFBF8] text-slate-800 shadow-xl px-5 py-6 w-full max-w-[310px] text-xs font-mono relative text-left animate-fadeIn"
+                  id="receipt-print-area"
+                >
+                  <div className="text-center space-y-1 mb-4">
+                    <h1 className="text-base font-extrabold text-black tracking-wide uppercase font-mono">{settings.storeName}</h1>
+                    <p className="text-[10px] text-slate-600 whitespace-pre-line leading-tight font-mono">{settings.address}</p>
+                    {settings.phone && <p className="text-[10px] text-slate-600 font-mono">Tel: {settings.phone}</p>}
+                    
+                    <div className="h-px border-t border-dashed border-slate-400 my-3"></div>
+                    
+                    <div className="text-[10px] text-left text-slate-700 space-y-0.5 font-mono">
+                      <div><strong>TRANSACTION NO:</strong> {completedSale.id.toUpperCase()}</div>
+                      <div><strong>DATE RECORDED:</strong> {new Date(completedSale.timestamp).toLocaleString()}</div>
+                      <div><strong>OPERATOR:</strong> {completedSale.cashierName || 'System Cashier'}</div>
+                      <div><strong>CUSTOMER:</strong> {completedSale.customerName || 'Walk-in Customer'}</div>
+                    </div>
+                    
+                    <div className="h-px border-t border-dashed border-slate-400 my-3"></div>
+                  </div>
+
+                  {/* Items detailed lists */}
+                  <table className="w-full text-left font-mono text-[11px] mb-4">
+                    <thead>
+                      <tr className="border-b border-dashed border-slate-400 text-slate-600">
+                        <th className="pb-1 font-bold">Item</th>
+                        <th className="pb-1 text-center font-bold">Qty</th>
+                        <th className="pb-1 text-right font-bold">Price</th>
+                        <th className="pb-1 text-right font-bold">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {completedSale.items.map((item) => (
+                        <tr key={item.productId} className="text-black">
+                          <td className="py-1.5 max-w-[120px] truncate">{item.productName}</td>
+                          <td className="py-1.5 text-center">{item.quantity}</td>
+                          <td className="py-1.5 text-right">{settings.currency}{item.price.toFixed(2)}</td>
+                          <td className="py-1.5 text-right">{settings.currency}{(item.price * item.quantity).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {/* Totals breakdown */}
+                  <div className="font-mono text-[11px] space-y-1.5 border-t border-dashed border-slate-400 pt-3 mb-4 text-black">
+                    <div className="flex justify-between">
+                      <span>SUBTOTAL</span>
+                      <span>{settings.currency}{completedSale.subtotal.toFixed(2)}</span>
+                    </div>
+                    {completedSale.discount > 0 && (
+                      <div className="flex justify-between text-rose-700 font-semibold">
+                        <span>DISCOUNT APPLIED</span>
+                        <span>-{settings.currency}{completedSale.discount.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span>TAX VAT ({settings.taxRate}%)</span>
+                      <span>{settings.currency}{completedSale.tax.toFixed(2)}</span>
+                    </div>
+                    <div className="h-px border-t border-dashed border-slate-400 my-1"></div>
+                    <div className="flex justify-between text-xs font-bold">
+                      <span>GRAND TOTAL</span>
+                      <span>{settings.currency}{completedSale.total.toFixed(2)}</span>
+                    </div>
+                    <div className="h-px border-t border-dashed border-slate-400 my-1"></div>
+                    <div className="flex justify-between text-[10px] text-slate-600 font-semibold uppercase">
+                      <span>PAID BY</span>
+                      <span>{completedSale.paymentMethod.replace(/_/g, ' ')}</span>
+                    </div>
+                    {completedSale.paymentMethod === 'credit' && completedSale.dueDate && (
+                      <div className="flex justify-between text-[10px] text-blue-800 font-bold">
+                        <span>DUE DATE</span>
+                        <span>{new Date(completedSale.dueDate).toLocaleDateString()}</span>
+                      </div>
+                    )}
+                    {completedSale.notes && (
+                      <div className="text-[10px] text-slate-500 border border-slate-200 p-1.5 rounded bg-slate-50/50 mt-2 font-sans italic">
+                        <strong>Notes:</strong> "{completedSale.notes}"
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Barcode in CSS */}
+                  <div className="py-3 border-t border-dashed border-slate-300">
+                    <div className="flex justify-center" title="Pre-Check ID Code">
+                      <div className="flex h-10 items-end space-x-[1px]">
+                        {[2,1,3,1,2,4,1,2,1,3,2,1,4,1,2,3,1,2,1,4,1,2,1,3,2,1].map((w, i) => (
+                          <div key={i} className="bg-black" style={{ width: `${w}px`, height: '100%' }}></div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="text-center text-[9px] text-slate-500 font-mono mt-1 tracking-widest">
+                      *{completedSale.id}*
+                    </div>
+                  </div>
+
+                  {/* Footnotes */}
+                  <div className="text-center font-mono text-[9px] text-slate-500 space-y-1.5 mt-2 leading-relaxed">
+                    <p className="whitespace-pre-line">{settings.receiptHeader}</p>
+                    <div className="h-px border-t border-slate-300 w-1/3 mx-auto"></div>
+                    <p className="whitespace-pre-line">{settings.receiptFooter}</p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* PRINT / EXPORT RECEIPT MODAL ACTIONS */}
             <div className="bg-slate-950 p-4 border-t border-slate-850 flex space-x-2.5 print:hidden">
               <button
+                type="button"
                 onClick={clearCart}
-                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-3 rounded-lg font-medium cursor-pointer transition-colors border border-slate-700/50"
+                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-3 rounded-lg font-medium cursor-pointer transition-colors border border-slate-700/50 animate-pulse"
                 id="receipt-done-btn"
               >
-                Done / Next Sale
+                Done / Next Sale (Esc)
               </button>
               
               <button
+                type="button"
                 onClick={triggerPrintReceipt}
-                className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-xs py-3 rounded-lg font-bold flex items-center justify-center space-x-1.5 transition-all shadow-md shadow-blue-600/15 cursor-pointer"
+                className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-xs py-3 rounded-lg font-bold flex items-center justify-center space-x-1.5 transition-all shadow-md shadow-blue-600/15 cursor-pointer hover:shadow-lg"
                 id="receipt-print-btn"
               >
                 <Printer className="w-4 h-4" />
@@ -1267,6 +1859,123 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
           </div>
         </div>
       )}
-    </div>
+
+      {/* HARDWARE INTERACTION & PRINT CALIBRATION GUIDE MODAL */}
+      {showHelpModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto animate-fadeIn font-sans" id="help-modal-overlay">
+          <div className="bg-slate-900 rounded-2xl shadow-2xl max-w-lg w-full border border-slate-800 overflow-hidden flex flex-col my-8 text-left">
+            
+            {/* Header */}
+            <div className="bg-slate-950 px-5 py-4 border-b border-slate-800 flex justify-between items-center text-slate-400 select-none">
+              <div className="flex items-center space-x-2">
+                <Monitor className="text-blue-400 w-5 h-5" />
+                <span className="text-white text-sm font-bold">Hardware Connection & Print Calibration Guide</span>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowHelpModal(false)} 
+                className="text-slate-500 hover:text-white font-semibold text-xs cursor-pointer p-1"
+                id="close-help-modal-x"
+              >
+                ✕ Close
+              </button>
+            </div>
+
+            {/* Scrollable instructions */}
+            <div className="p-5 overflow-y-auto max-h-[60vh] space-y-4 text-xs text-slate-300 leading-relaxed font-sans">
+              
+              {/* Timing wedges */}
+              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
+                <h3 className="text-blue-400 font-bold flex items-center space-x-1">
+                  <span>🔌</span>
+                  <span>1. Hardware Wedge Barcode Scanners (USB/PS2)</span>
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  This POS system includes an industrial-grade input-timing filter compatible with all keyboard-wedge laser scanners (dating from <strong>2000 till 2026</strong>) including Honeywell, Zebra, Symbol, Datalogic, and Eyoyo.
+                </p>
+                <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-400 font-mono">
+                  <li><strong>Plug & Play:</strong> No specific windows drivers or companion software is required.</li>
+                  <li><strong>Automatic Capture:</strong> Keystrokes received within 65ms are caught globally by the wedge engine, matching the scanned product instantly, regardless of what field is currently active.</li>
+                </ul>
+              </div>
+
+              {/* Thermal printers instructions */}
+              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
+                <h3 className="text-emerald-400 font-bold flex items-center space-x-1">
+                  <span>🖨️</span>
+                  <span>2. Thermal Receipt Printer Setup (58mm / 80mm)</span>
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  Our custom multi-format layout maps CSS grids cleanly to standard paper rolls. Epson TM series, Star Micronics, and XPrinter hardware are supported natively.
+                </p>
+                <div className="space-y-1 bg-slate-900 p-2.5 rounded border border-slate-850/50 text-[11px] font-mono text-slate-400">
+                  <p className="text-white font-bold">Windows 10+ Driver Settings:</p>
+                  <p>1. Toggle print preview (F9) and click "Print Physical Receipt"</p>
+                  <p>2. In the Windows Print Dialog, expand <strong>"More Settings"</strong></p>
+                  <p>3. Select Margins: <strong className="text-emerald-400">None</strong> or <strong className="text-emerald-400">Minimum</strong></p>
+                  <p>4. Check/Enable: <strong className="text-emerald-400">"Background Graphics"</strong> (this loads custom receipt styles)</p>
+                  <p>5. Uncheck/Disable: <strong>"Headers and Footers"</strong> (removes unwanted URL & Date stamps)</p>
+                </div>
+              </div>
+
+              {/* A4 Office printer */}
+              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
+                <h3 className="text-indigo-400 font-bold flex items-center space-x-1">
+                  <span>📄</span>
+                  <span>3. A4 Corporate Invoice Printing</span>
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  For corporate billing, client credit accounts, or legal tax invoices, toggle the width setting to <strong className="text-indigo-300">A4 Invoice</strong>. This renders a highly sophisticated multi-column invoice with a dedicated customer section, invoice header, and custom operator details perfectly suited for standard laser printers.
+                </p>
+              </div>
+
+              {/* Shortcuts sheet */}
+              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
+                <h3 className="text-amber-400 font-bold flex items-center space-x-1">
+                  <span>⌨️</span>
+                  <span>4. Windows 10+ POS Keyboard Shortcuts Guide</span>
+                </h3>
+                <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-slate-400">
+                  <div className="flex justify-between border-b border-slate-850 pb-1"><span>[F1] Help Guide</span> <span className="text-white">Active</span></div>
+                  <div className="flex justify-between border-b border-slate-850 pb-1"><span>[F2] Reset Basket</span> <span className="text-white">Clear All</span></div>
+                  <div className="flex justify-between border-b border-slate-850 pb-1"><span>[F3] Search Bar</span> <span className="text-white">Focus Field</span></div>
+                  <div className="flex justify-between border-b border-slate-850 pb-1"><span>[F4] Soft Camera</span> <span className="text-white">Toggle scan</span></div>
+                  <div className="flex justify-between border-b border-slate-850 pb-1"><span>[F8] Custom Item</span> <span className="text-white">Toggle Form</span></div>
+                  <div className="flex justify-between border-b border-slate-850 pb-1"><span>[F9] Save & Print</span> <span className="text-white">Book Order</span></div>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Footer actions */}
+            <div className="bg-slate-950 p-4 border-t border-slate-850 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowHelpModal(false)}
+                className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-5 py-2 rounded-lg font-bold cursor-pointer transition-all shadow-md shadow-blue-900/10"
+              >
+                Understood / Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Close of grid container */}
+      </div> 
+
+      {/* DESKTOP KEYBOARD HOTKEYS BAR */}
+      <div className="bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs text-slate-500 font-sans print:hidden shadow-inner select-none" id="keyboard-hotkeys-status">
+        <span className="font-bold text-slate-700 uppercase text-[9px] tracking-wider font-mono">Quick hotkeys:</span>
+        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F1</kbd> <span className="text-slate-600 text-[11px]">Hardware Help</span></div>
+        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F2</kbd> <span className="text-slate-600 text-[11px]">Reset Cart</span></div>
+        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F3</kbd> <span className="text-slate-600 text-[11px]">Search Input</span></div>
+        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F4</kbd> <span className="text-slate-600 text-[11px]">Toggle Scanner</span></div>
+        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F8</kbd> <span className="text-slate-600 text-[11px]">Add Custom Item</span></div>
+        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F9</kbd> <span className="text-emerald-700 font-semibold text-[11px]">Book & Print</span></div>
+        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">Esc</kbd> <span className="text-slate-600 text-[11px]">Reset / Close</span></div>
+      </div>
+
+    </div> /* Close of checkout-terminal-wrapper */
   );
 }

@@ -1329,6 +1329,7 @@ export default function App() {
               {activeTab === 'tutorial' && (
                 <AppTutorial
                   currency={settings.currency}
+                  activeProfile={activeProfile}
                 />
               )}
             </div>

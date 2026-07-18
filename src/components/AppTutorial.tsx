@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   HelpCircle, 
   ShoppingBag, 
@@ -15,206 +15,353 @@ import {
   FolderEdit, 
   ClipboardCheck, 
   Plus, 
-  UserCheck 
+  UserCheck,
+  Lock,
+  Shield,
+  ShieldCheck,
+  Terminal,
+  Info,
+  FileText,
+  Sparkles,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 
 interface AppTutorialProps {
   onClose?: () => void;
   currency: string;
+  activeProfile?: {
+    id: string;
+    name: string;
+    role: 'admin' | 'manager' | 'cashier';
+    passwordHash: string;
+  } | null;
 }
 
-export default function AppTutorial({ onClose, currency }: AppTutorialProps) {
+export default function AppTutorial({ onClose, currency, activeProfile }: AppTutorialProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTopic, setSelectedTopic] = useState<string>('all');
+  const [selectedTopic, setSelectedTopic] = useState<string>('recommended');
 
+  const userRole = activeProfile?.role || 'cashier';
+  const userName = activeProfile?.name || 'Retail Cashier';
+
+  // Interactive Checklist Persistence
+  const [checklist, setChecklist] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(`myshop_tutorial_checklist_${activeProfile?.id || 'guest'}`);
+      if (stored) {
+        setChecklist(JSON.parse(stored));
+      } else {
+        setChecklist({});
+      }
+    } catch (e) {
+      console.error('Failed to parse tutorial checklist state', e);
+    }
+  }, [activeProfile?.id]);
+
+  const toggleChecklistItem = (itemId: string) => {
+    const updated = { ...checklist, [itemId]: !checklist[itemId] };
+    setChecklist(updated);
+    try {
+      localStorage.setItem(`myshop_tutorial_checklist_${activeProfile?.id || 'guest'}`, JSON.stringify(updated));
+    } catch (e) {
+      console.error('Failed to save tutorial checklist state', e);
+    }
+  };
+
+  // Profile-specific inherent functionalities & interactive tasks
+  const roleSpecs = {
+    cashier: {
+      title: 'Retail Cashier Profile',
+      badgeBg: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
+      icon: ShoppingBag,
+      summary: 'Responsible for frontline checkout, barcode scanner operations, physical receipt printing, and customer ledger records.',
+      tabsAllowed: ['Cash Checkout', 'Store Credit Ledger', 'Interactive Help Desk'],
+      functionalities: [
+        { name: 'Frontline Cash Checkout', desc: 'Add retail products, scan barcodes, and edit item quantities in the cart.' },
+        { name: 'Customer Credit Bookings', desc: 'Book purchases on credit by capturing names, phones, and set repayment terms.' },
+        { name: 'Wedge Printing Configuration', desc: 'Toggle receipts dynamically between 58mm Mobile rolls, 80mm Coated, or A4 Office styles.' },
+        { name: 'Partial Debt Repayments', desc: 'Process customer cash repayments and issue update statements inside the Ledger.' },
+        { name: 'Wedge Input Timing Hooks', desc: 'Execute global keystroke-captures from laser barcode hardware scanners (Honeywell/Zebra).' }
+      ],
+      trainingTasks: [
+        { id: 'c_task1', label: 'Practice adding products to the cart by clicking a catalog card.' },
+        { id: 'c_task2', label: 'Toggle the receipt print format from "80mm" to "58mm" in the print checkout popup.' },
+        { id: 'c_task3', label: 'Input a customer cash tender amount and check the calculated "Change Due".' },
+        { id: 'c_task4', label: 'Register a store credit purchase by entering a custom customer phone number.' },
+        { id: 'c_task5', label: 'View the Credit Ledger, select an outstanding buyer, and log a partial repayment.' }
+      ]
+    },
+    manager: {
+      title: 'Store Operations Manager Profile',
+      badgeBg: 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30',
+      icon: UserCheck,
+      summary: 'Authorized to oversee catalog parameters, adjust wholesale/retail stocks, manage categories and warehouse zones, audit ground discrepancies, and analyze profit margins.',
+      tabsAllowed: ['Cash Checkout', 'Store Credit Ledger', 'Stock Room (Catalog & Logs)', 'Business Analytics', 'Interactive Help Desk'],
+      functionalities: [
+        { name: 'Manual Catalog Adjustments', desc: 'Edit product selling prices, bulk supplier costs, SKU barcodes, and minimal stock thresholds.' },
+        { name: 'Warehouse Zone Customization', desc: 'Define, edit, and expand storage zones (e.g., Wholesale Zone A, Storage Suite C).' },
+        { name: 'Weekly Ground Audits', desc: 'Reconcile digital ledger figures with physical stock on shelves, logging surplus or deficits.' },
+        { name: 'Supplier Delivery Intake', desc: 'Log incoming bulk stock directly to Back-Storage warehouses and generate logs.' },
+        { name: 'Business Health Analytics', desc: 'Monitor gross markup margins, daily order volumes, and average basket statistics.' }
+      ],
+      trainingTasks: [
+        { id: 'm_task1', label: 'Create a new warehouse location (e.g. "Wholesale Zone B") in the Stock Room.' },
+        { id: 'm_task2', label: 'Fast-adjust a product\'s shelf stock count using the immediate "+" or "-" buttons.' },
+        { id: 'm_task3', label: 'Initiate a Weekly Ground Audit and input a mock shelf count to generate a Deficit (📉) flag.' },
+        { id: 'm_task4', label: 'Log a write-off for damaged goods with a notes justification (e.g., "crushed packaging").' },
+        { id: 'm_task5', label: 'Analyze the SVG daily sales timeline on the business health analytics panel.' }
+      ]
+    },
+    admin: {
+      title: 'System Administrator Profile',
+      badgeBg: 'bg-blue-500/15 text-blue-400 border border-blue-500/30',
+      icon: ShieldCheck,
+      summary: 'Holds master-level system clearance. In charge of operator password registries, full JSON database exports/restorations, cache cleans, and system-wide setting parameters.',
+      tabsAllowed: ['All tabs unlocked (Checkout, Credit, Stocks, Analytics, Backups, Help Desk)'],
+      functionalities: [
+        { name: 'Operator Credentials Oversight', desc: 'Review active cashiers and managers, adjust credentials, and enforce access control.' },
+        { name: 'JSON Backup & Recovery', desc: 'Export full database snapshots as JSON files and upload backups to recover instantly.' },
+        { name: 'System Cache Restores', desc: 'Initiate a full ledger purge, reset to initial states, or re-seed standard catalog templates.' },
+        { name: 'Store Setting Modifiers', desc: 'Lock the store currency, configure tax VAT rates, and rewrite physical receipt headers/footers.' },
+        { name: 'Global Audit Log Reviews', desc: 'Audit system logs detailing the operator, quantity change, and timestamp of every stock adjustment.' }
+      ],
+      trainingTasks: [
+        { id: 'a_task1', label: 'Download a secure JSON Backup of the entire register database.' },
+        { id: 'a_task2', label: 'Inspect the system-wide Stock Logs timeline to review manual operator adjustments.' },
+        { id: 'a_task3', label: 'Review the operator profiles password hashes inside the system settings.' },
+        { id: 'a_task4', label: 'Simulate a physical printer diagnostic page output from the checklist menu.' },
+        { id: 'a_task5', label: 'Toggle the system-wide Tax VAT percentage and verify the new rate on checkout carts.' }
+      ]
+    }
+  };
+
+  const currentRoleSpec = roleSpecs[userRole];
+
+  // master guides registry with clearance-tags mapped to roles
   const guides = [
+    {
+      id: 'checkout-flow',
+      category: 'checkout',
+      minRole: 'cashier',
+      title: 'Operating Cash Checkout & Register Printers',
+      icon: ShoppingBag,
+      iconBg: 'bg-emerald-50 text-emerald-600 border border-emerald-100',
+      description: 'Step-by-step instructions on loading checkout carts, managing barcode wedge timing, and issuing printed receipts.',
+      steps: [
+        {
+          title: 'Load the Checkout Cart',
+          detail: 'Click items in the product grid to append them. Double click or use the quick inputs in the cart to change quantity levels.'
+        },
+        {
+          title: 'Using Barcode Scanners (Wedge & Camera)',
+          detail: 'For handheld laser scanners: simply squeeze the trigger; keystroke-events are intercepted automatically. For mobile, click "📷 Scan Barcode" to stream camera capture.'
+        },
+        {
+          title: 'Verify Customer Cash Tender',
+          detail: 'When the customer hands you physical currency, type that amount into the "Cash Tendered" box. The register instantly details the "Change Due" in prominent green numbers.'
+        },
+        {
+          title: 'Choose Width & Print Receipt',
+          detail: 'Click "Finalize & Issue Receipt". Choose the paper style (58mm, 80mm, or A4) matching your printer. Press "Print Physical Receipt" or press Esc to start the next cart.'
+        }
+      ],
+      proTip: 'For high-speed registers, keep the barcode search input focused. Scanned items add directly to the cart in 65ms without manual clicking!'
+    },
     {
       id: 'credit',
       category: 'credit',
+      minRole: 'cashier',
       title: 'How to Record Purchases on Credit (Credit Ledger)',
       icon: BookOpen,
       iconBg: 'bg-emerald-50 text-emerald-600 border border-emerald-100',
-      description: 'Step-by-step instructions on keying in details of people purchasing on credit, tracking debts, and processing repayments.',
+      description: 'Step-by-step instructions on checking out credit buyers, tracking repayment timelines, and processing partial deposits.',
       steps: [
         {
-          title: 'Start at Cash Checkout Terminal',
-          detail: 'Add products to the active cart in the "Cash Checkout" tab. Scan barcoded items or click their cards.'
+          title: 'Initiate Credit Payment',
+          detail: 'Assemble the cart items. In the payment methods sidebar, select "Store Credit / Ledger".'
         },
         {
-          title: 'Select Payment Method: Credit Ledger',
-          detail: 'When the cart is ready, locate the payment selection panel on the right sidebar and click the "Store Credit / Ledger" payment method button.'
+          title: 'Capture Customer Identification Specs',
+          detail: 'Type in the Customer\'s Full Name and Mobile Phone. You can also pick a previous credit customer from the smart auto-suggest list!'
         },
         {
-          title: 'Enter Customer Identification Specs',
-          detail: 'A secure form will slide down. Enter the Customer\'s Full Name and Mobile Phone Number. You can also select an existing customer from the auto-suggest list if they have bought on credit before!'
+          title: 'Set Due Dates & Custom Markup',
+          detail: 'Specify the repayment due date (default is 14 days) and apply optional custom interest rates to represent delayed payment markup.'
         },
         {
-          title: 'Authorize and Finalize',
-          detail: 'Review the interest configurations (if any) and click "Record Credit Transaction". This saves the invoice, updates product stocks, and creates a debt entry in the Credit Ledger.'
-        },
-        {
-          title: 'Track, Repay, or Settle debts',
-          detail: 'Navigate to the "Credit Ledger" tab to view all unpaid balances, add partial repayments with logs, view individual repayment histories, or download balance statements.'
+          title: 'Log Payments inside the Ledger',
+          detail: 'When a customer makes a deposit, navigate to the "Credit Ledger" tab, click "Process Repayment", log the amount, and print an updated mini-balance sheet.'
         }
       ],
-      proTip: 'You can charge standard optional custom interest rates (e.g., 5%) when creating a credit record to account for delayed terms.'
+      proTip: 'In MyShop Desk, individual credit records are linked to the buyer\'s mobile number. Enter the exact same phone number to pile subsequent credits onto one consolidated profile!'
     },
     {
       id: 'warehouses',
       category: 'inventory',
+      minRole: 'manager',
       title: 'Managing Customizable Warehouses & Categories',
       icon: FolderEdit,
       iconBg: 'bg-amber-50 text-amber-600 border border-amber-100',
-      description: 'Learn how to customize categories, define warehouse zones (Wholesale 1, 2, 3), and scale up or down as your storage space changes.',
+      description: 'How to configure physical category tags, expand warehouse zones (Wholesale 1, 2, 3), and scale your catalog.',
       steps: [
         {
-          title: 'Open the Stock Room Tab',
-          detail: 'Go to the "Stock Room" tab from the sidebar (requires Administrator or Manager clearance level).'
+          title: 'Open the Warehouse Manager Tab',
+          detail: 'Access the "Stock Room" tab, then click the amber "📁 Manage Warehouses" button located at the top-right catalog tools.'
         },
         {
-          title: 'Click "Manage Warehouses" Button',
-          detail: 'At the top of the inventory page, click the amber "📁 Manage Warehouses" button to slide open the custom Category & Warehouse Manager.'
+          title: 'Add New Storage Locations',
+          detail: 'Input a unique warehouse code (e.g. "Wholesale Zone C") and click "Create". It is instantly active and selectable in your catalog forms.'
         },
         {
-          title: 'Add New Warehouse Storage Zone',
-          detail: 'Enter your new warehouse zone name (e.g. "Wholesale 4") and click "Add". It instantly becomes available in the dropdown lists of your catalog.'
+          title: 'Safely Rename Storage Sections',
+          detail: 'Edit any warehouse label. MyShop POS automatically migrates all registered stock quantities in that area to the new label in real-time!'
         },
         {
-          title: 'Modify or Rename Existing Zones',
-          detail: 'Click the "Edit" pencil icon on any listed warehouse zone, rename it (e.g., change "Wholesale 1" to "Storage B1"), and click Save. All registered products in that zone are automatically migrated to the new name in real time!'
-        },
-        {
-          title: 'Remove / Scale Down Warehouses Safely',
-          detail: 'Click the "Delete" trash icon. If products are registered in that warehouse, MyShop POS warns you and safely auto-reassigns those catalog items to the first available category to prevent any data corruption!'
+          title: 'De-register Warehouses with Safety Nets',
+          detail: 'If you delete a warehouse holding registered items, the catalog safety net dynamically re-assigns them to your default category, preserving database integrity.'
         }
       ],
-      proTip: 'Always name your warehouses clearly based on location or aisle numbers so cashiers can locate storage units effortlessly.'
+      proTip: 'Organize your warehouse names by rack or aisle codes (e.g. "Aisle B-Shelf 4") to give your stockers immediate location maps!'
     },
     {
       id: 'inventory-edit',
       category: 'inventory',
-      title: 'Manual Inventory Adjustment & Fast Stock Increments',
+      minRole: 'manager',
+      title: 'Catalog Adjustment & Backhouse Replenishments',
       icon: Package,
       iconBg: 'bg-blue-50 text-blue-600 border border-blue-100',
-      description: 'How to perform immediate changes on storehouse (wholesale) and shelf (retail) stock levels without spreadsheet overrides.',
+      description: 'How to adjust pricing markups, set minimal stock alert tags, and restock frontline retail shelves from wholesale storehouses.',
       steps: [
         {
-          title: 'Locate Product in Stock Room Catalog',
-          detail: 'Search by Product Name or scan the barcode to find the exact item card in the "Catalog" list.'
+          title: 'Manual Stock Adjustments',
+          detail: 'In the Catalog list, locate the product. Click the immediate "+" or "-" buttons next to the stock column to change numbers on the fly.'
         },
         {
-          title: 'Fast-Adjust Stock using + / - buttons',
-          detail: 'In the stock list, look at the "Wholesale Stock" and "Retail Stock" columns. You can click the intuitive "+" or "-" buttons on either side of the count to instantly add or subtract units.'
+          title: 'Define Wholesale Costs vs. Retail Prices',
+          detail: 'Open the edit form on a product. Record the "Supplier Unit Cost" and the "Retail Selling Price". MyShop Desk uses this data to map profit charts.'
         },
         {
-          title: 'Type Custom Amounts Directly',
-          detail: 'Double click or tap the stock count input box to type in any exact physical number directly. The change registers on focus lose.'
+          title: 'Restock Retail Shelves from Wholesale',
+          detail: 'Use the "Move Stock (Wholesale to Retail)" slider. This deducts units from backroom storage and shifts them onto the active retail shelf, keeping catalogs in sync.'
         },
         {
-          title: 'Automatic Logs & Reconciliations',
-          detail: 'Every manual stock adjustment triggers an automated entry in the Stock Logs ledger, describing the quantity changed and marking the timestamp.'
+          title: 'Log Supplier Shipments',
+          detail: 'When new bulk inventory deliveries arrive from suppliers, click "Buy Stock" to increment Wholesale levels and write corresponding stock logs.'
         }
       ],
-      proTip: 'To restock your store shelf directly from your storehouse in one sweep, use the "Restock Shelf & Supplier Buying" form inside the Stock Room tab.'
+      proTip: 'Always configure the "Min Stock Alert" number on fast-moving goods. When active retail shelves fall below this number, MyShop flags the row in amber and fires low stock alerts on your sidebar.'
     },
     {
       id: 'audit',
       category: 'inventory',
-      title: 'Performing a Weekly Physical Ground Audit',
+      minRole: 'manager',
+      title: 'Weekly Physical Stock Ground Reconciliation',
       icon: ClipboardCheck,
       iconBg: 'bg-purple-50 text-purple-600 border border-purple-100',
-      description: 'Reconcile digital database records with the real count of products physically sitting on your store shelves and backrooms.',
+      description: 'How to run physical audits, identify stock shrinkages, and reconcile digital database logs with real ground inventory.',
       steps: [
         {
-          title: 'Navigate to "Weekly Ground Audit" Tab',
-          detail: 'Open the Stock Room tab, and select "Weekly Ground Audit" from the sub-navigation header.'
+          title: 'Open the Weekly Ground Audit Sheet',
+          detail: 'Go to the "Stock Room" tab, and toggle the sub-navigation header to "Weekly Ground Audit".'
         },
         {
-          title: 'Key in Actual Ground Counts',
-          detail: 'Count physical products in the storehouse (Wholesale) and shelves (Retail). Enter these exact counted figures into the "Actual Count" column inputs.'
+          title: 'Count Shelves & Key in Actual Quantities',
+          detail: 'Perform a physical count of items in the storehouse (Wholesale) and shelves (Retail). Enter these counts into the corresponding "Actual" column fields.'
         },
         {
-          title: 'Observe Discrepancy Alerts',
-          detail: 'If the physical counts do not match the database counts, MyShop POS immediately highlights the row in yellow and displays a "Surplus (📈)" or "Deficit (📉)" tag with the exact difference.'
+          title: 'Read Discrepancy Alerts',
+          detail: 'The POS highlights discrepancy rows in yellow and displays "Surplus (📈)" or "Deficit (📉)" tags matching the difference.'
         },
         {
-          title: 'Specify Reconciliation Notes',
-          detail: 'Provide a reason for the discrepancy (e.g., "damaged box", "returns from customer") in the reason text box.'
-        },
-        {
-          title: 'Apply Ground Calibration',
-          detail: 'Click "Reconcile Stock" on the discrepancy row. The POS dynamically updates active database levels to ground reality and logs the physical audit adjustment.'
+          title: 'Apply Calibrations with Notes',
+          detail: 'Type the auditing reason (e.g., "damaged packaging", "shrinkage") and click "Reconcile Stock". The digital active stock calibrates to match the physical count.'
         }
       ],
-      proTip: 'Run a physical audit every Friday evening to ensure your profit margins and analytics represent true inventory states.'
-    },
-    {
-      id: 'checkout-flow',
-      category: 'checkout',
-      title: 'Operating Cash Checkout & Register Printers',
-      icon: ShoppingBag,
-      iconBg: 'bg-pink-50 text-pink-600 border border-pink-100',
-      description: 'How to add products, handle scans, calculate taxes, process cash, and trigger thermal printer receipt Wedge emulation.',
-      steps: [
-        {
-          title: 'Load the Cart',
-          detail: 'Click any item card in the checkout section. Use the search bar to locate specific SKUs quickly.'
-        },
-        {
-          title: 'Using Barcode Scanner (Camera or Hardware Wedge)',
-          detail: 'Click "📷 Scan Barcode" to open your computer/mobile camera and read live UPC barcodes. Alternatively, type the barcode directly into the rapid-entry box and hit enter.'
-        },
-        {
-          title: 'Apply Discounts or Modifiers',
-          detail: 'Customize quantities directly in the cart, configure optional item-specific discounts, or set general cart discounts.'
-        },
-        {
-          title: 'Input Customer Tender (Cash Amount)',
-          detail: 'Under Cash payments, type in the currency amount handed over by the customer. The register immediately shows the exact change due!'
-        },
-        {
-          title: 'Print Thermal Receipt',
-          detail: 'Click "Finalize & Issue Receipt". A digital high-contrast thermal-formatted receipt displays on the terminal, and your device\'s system print dialog is triggered for physical paper output.'
-        }
-      ],
-      proTip: 'Ensure your thermal roll is 58mm or 80mm and correctly loaded. You can verify printer status at any time on the top register window bar.'
+      proTip: 'Incentivize standard auditing habits by scheduling a ground audit every Friday afternoon to ensure weekend margins represent ground reality.'
     },
     {
       id: 'analytics',
       category: 'analytics',
-      title: 'Analyzing Business Health & Profit Margins',
+      minRole: 'manager',
+      title: 'Reading Business Margins & Sales Timelines',
       icon: TrendingUp,
       iconBg: 'bg-indigo-50 text-indigo-600 border border-indigo-100',
-      description: 'How to read financial analytics charts, gross margins, average order value, and operator performance.',
+      description: 'Learn how sales margins are computed and how to review daily revenue trends or individual order logs.',
       steps: [
         {
-          title: 'Understand Key Indicators',
-          detail: 'Gross Revenue shows total sales, Profit is calculated as (Retail Sale Price - Wholesale Cost) on sold quantities, and Average Cart indicates average spend size.'
+          title: 'Analyze Key Indicators',
+          detail: 'Gross Revenue tracks total intake, profit maps out (Retail price - Supplier wholesale cost) on actual sold quantities, and order counts map total customer tickets.'
         },
         {
-          title: 'Daily Sales Trend Line',
-          detail: 'An interactive SVG chart depicts sales volume spikes across hourly/daily intervals, allowing you to identify peak shopping periods.'
+          title: 'Inspect hourly/daily trend lines',
+          detail: 'Review the interactive sales charts to locate peak shopping times. Use this peak data to arrange cashier shifts!'
         },
         {
-          title: 'Monitor Low Stock Warnings',
-          detail: 'Low stocks are highlighted in the Stock Room and visible to managers immediately, ensuring you order items before they run out of stock.'
+          title: 'Identify High-Margin Goods',
+          detail: 'Review catalog cost-to-price ratios to prioritize marketing high-profit products over low-margin bulk goods.'
         }
       ],
-      proTip: 'Filter analytics frequently to evaluate which products are yielding the highest markup ratios for your grocery operations.'
+      proTip: 'Managers can edit previous cash sales inside the Analytics panel order lists to correct cashier pricing errors. The inventory shelf levels will auto-reconcile!'
+    },
+    {
+      id: 'backups',
+      category: 'backups',
+      minRole: 'admin',
+      title: 'Database Security: Snapshot Backups & State Restores',
+      icon: Database,
+      iconBg: 'bg-rose-50 text-rose-600 border border-rose-100',
+      description: 'Exclusive instructions for System Administrators to download secure JSON registers, restore backup snapshots, or wipe systems safely.',
+      steps: [
+        {
+          title: 'Create Secure JSON Backups',
+          detail: 'Navigate to the "Database Backups" tab and click "Download Local Backup (JSON)". This aggregates all catalogs, stock logs, credit accounts, and settings into one encrypted-compatible snapshot.'
+        },
+        {
+          title: 'Upload & Restore Snapshots',
+          detail: 'Drag and drop any previously saved MyShop Desk JSON backup file into the restore slot. Click "Restore System State" to repopulate the register database instantly.'
+        },
+        {
+          title: 'Complete Register Purges',
+          detail: 'To wipe old records for a new business quarter, click "Clear & Format Database". Note: This action is irreversible and requires the master administrator passcode.'
+        },
+        {
+          title: 'Load Sandbox Seed Templates',
+          detail: 'To perform training drills or verify receipt printers with demo stock, click "Reload Demo Store Catalog" to seed 12 premium barcoded products instantly.'
+        }
+      ],
+      proTip: 'Keep a weekly backup snapshot on an external USB flash drive. Because MyShop is 100% local, backup files are your ultimate security insurance!'
     }
   ];
 
+  const isRoleAllowed = (role: string, minRole: string) => {
+    if (role === 'admin') return true;
+    if (role === 'manager') return minRole === 'manager' || minRole === 'cashier';
+    if (role === 'cashier') return minRole === 'cashier';
+    return false;
+  };
+
   const filteredGuides = guides.filter(g => {
-    const matchesSearch = g.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          g.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          g.steps.some(s => s.title.toLowerCase().includes(searchQuery.toLowerCase()) || s.detail.toLowerCase().includes(searchQuery.toLowerCase()));
-    const matchesCategory = selectedTopic === 'all' || g.category === selectedTopic;
-    return matchesSearch && matchesCategory;
+    // Topic filters
+    if (selectedTopic === 'recommended') {
+      if (!isRoleAllowed(userRole, g.minRole)) return false;
+    } else if (selectedTopic !== 'all' && g.category !== selectedTopic) {
+      return false;
+    }
+
+    // Search query
+    const query = searchQuery.toLowerCase();
+    const matchesSearch = g.title.toLowerCase().includes(query) || 
+                          g.description.toLowerCase().includes(query) ||
+                          g.steps.some(s => s.title.toLowerCase().includes(query) || s.detail.toLowerCase().includes(query));
+    return matchesSearch;
   });
 
   return (
     <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden" id="app-tutorial-section">
-      {/* Tutorial Header banner */}
+      {/* Dynamic Header Banner based on logged in Profile */}
       <div className="bg-slate-900 text-white p-6 sm:p-8 relative">
         <div className="absolute right-4 top-4 opacity-10 pointer-events-none">
           <HelpCircle className="w-40 h-40 text-white" />
@@ -222,36 +369,34 @@ export default function AppTutorial({ onClose, currency }: AppTutorialProps) {
         
         <div className="max-w-3xl space-y-2">
           <div className="inline-flex items-center space-x-1.5 px-2.5 py-1 bg-blue-500/20 text-blue-300 font-bold text-[10px] uppercase tracking-wider rounded-full font-mono">
-            <SparklesIcon className="w-3.5 h-3.5" />
-            <span>Interactive POS Training Manual</span>
+            <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+            <span>Interactive {currentRoleSpec.title} Manual</span>
           </div>
-          <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight">MyShop Desk Interactive Knowledge Base</h2>
+          <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight">MyShop Desk Training Manual</h2>
           <p className="text-xs text-slate-400 max-w-xl leading-relaxed">
-            Welcome to your master POS system guide! Here you will find direct operational recipes for managing checkouts, handling store credits, managing warehouse zones, and physical audits.
+            Welcome, <strong className="text-white font-semibold">{userName}</strong>! Below is your tailor-made training course and operational guidelines mapped to your active profile functionalities.
           </p>
         </div>
 
-        {/* Search & Topic Tabs bar */}
-        <div className="mt-6 flex flex-col sm:flex-row gap-3">
-          <div className="relative flex-1">
-            <Search className="absolute left-3.5 top-2.5 w-4 h-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Search tutorial guides, questions, or steps..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-slate-800 text-slate-100 placeholder-slate-400 border border-slate-700 rounded-lg pl-10 pr-4 py-2 text-xs focus:outline-none focus:border-blue-500 font-sans"
-              id="tutorial-search-input"
-            />
+        {/* Dynamic Profile Badge & Tabs */}
+        <div className="mt-6 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between border-t border-slate-800 pt-5">
+          <div className="flex items-center space-x-3">
+            <div className={`p-2 rounded-xl ${currentRoleSpec.badgeBg} shrink-0`}>
+              <currentRoleSpec.icon className="w-5 h-5" />
+            </div>
+            <div>
+              <span className="text-[9px] uppercase tracking-wider text-slate-500 font-bold block font-mono">Active Role Level</span>
+              <span className="text-xs font-extrabold text-white block capitalize">{userRole} / Full Local Offline Permissions</span>
+            </div>
           </div>
           
-          <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700 overflow-x-auto">
+          <div className="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700 overflow-x-auto max-w-full">
             {[
-              { id: 'all', label: 'All Topics' },
-              { id: 'credit', label: 'Credit Ledger' },
-              { id: 'inventory', label: 'Warehouses / Stock' },
-              { id: 'checkout', label: 'Checkout & Sales' },
-              { id: 'analytics', label: 'Analytics' }
+              { id: 'recommended', label: `My SOPs (${userRole.toUpperCase()})` },
+              { id: 'all', label: 'All SOP Guides' },
+              { id: 'checkout', label: 'Checkout & Credits' },
+              { id: 'inventory', label: 'Stocks & Auditing' },
+              { id: 'backups', label: 'Admin Backups' }
             ].map(tab => (
               <button
                 key={tab.id}
@@ -268,111 +413,255 @@ export default function AppTutorial({ onClose, currency }: AppTutorialProps) {
         </div>
       </div>
 
-      {/* Guide Listing & Walkthrough Content */}
-      <div className="p-5 sm:p-6 lg:p-8 space-y-8 bg-slate-50/50">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {filteredGuides.length === 0 ? (
-            <div className="col-span-2 text-center py-12 bg-white rounded-xl border border-slate-200/60 p-6 space-y-2">
-              <HelpCircle className="w-10 h-10 text-slate-300 mx-auto" />
-              <h4 className="text-sm font-bold text-slate-800">No match found</h4>
-              <p className="text-xs text-slate-500 max-w-md mx-auto">
-                No guides fit your search query "{searchQuery}". Try searching for keywords like "credit", "warehouse", "reconciliation", or "repay".
+      {/* Main Panel Content */}
+      <div className="p-4 sm:p-6 lg:p-8 space-y-6 bg-slate-50/50">
+        
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+          
+          {/* PROFILE INHERENT FUNCTIONALITIES CARD (LEFT COLUMN) */}
+          <div className="lg:col-span-1 space-y-6">
+            
+            {/* INHERENT FUNCTIONALITIES CARD */}
+            <div className="bg-white border border-slate-200/80 rounded-xl p-5 shadow-xs space-y-4 text-left">
+              <div className="flex items-center space-x-2 border-b border-slate-100 pb-3">
+                <Shield className="w-4.5 h-4.5 text-blue-500 shrink-0" />
+                <h3 className="text-xs font-extrabold text-slate-950 uppercase tracking-wider font-sans">Authorized Functionalities</h3>
+              </div>
+
+              <p className="text-[11px] text-slate-500 leading-relaxed font-medium">
+                {currentRoleSpec.summary}
               </p>
-            </div>
-          ) : (
-            filteredGuides.map(guide => {
-              const GuideIcon = guide.icon;
-              return (
-                <div 
-                  key={guide.id} 
-                  className="bg-white rounded-xl border border-slate-200/70 p-5 shadow-xs space-y-4 hover:border-slate-300 hover:shadow-sm transition-all flex flex-col justify-between"
-                  id={`tutorial-guide-${guide.id}`}
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-start space-x-3">
-                      <div className={`p-2.5 rounded-xl shrink-0 ${guide.iconBg}`}>
-                        <GuideIcon className="w-5 h-5" />
-                      </div>
-                      <div className="space-y-1">
-                        <span className="text-[9px] uppercase tracking-widest font-extrabold text-blue-600 bg-blue-50 px-2 py-0.5 rounded font-mono">
-                          {guide.category} manual
-                        </span>
-                        <h3 className="text-sm font-bold text-slate-900 leading-tight">{guide.title}</h3>
-                      </div>
-                    </div>
 
-                    <p className="text-xs text-slate-500 leading-relaxed font-medium">
-                      {guide.description}
-                    </p>
-
-                    {/* Step-by-Step interactive process */}
-                    <div className="border-t border-slate-100 pt-4 mt-2 space-y-3">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 font-mono block">Action Checklist:</span>
-                      
-                      <div className="space-y-2.5">
-                        {guide.steps.map((step, idx) => (
-                          <div key={idx} className="flex items-start space-x-2.5">
-                            <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5 font-mono">
-                              {idx + 1}
-                            </span>
-                            <div className="text-[11px] leading-relaxed">
-                              <span className="font-bold text-slate-800 block">{step.title}</span>
-                              <span className="text-slate-500 font-medium block">{step.detail}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Pro Tip Callout Box */}
-                  <div className="mt-5 pt-3 border-t border-slate-100 bg-amber-50/40 p-3 rounded-lg border border-amber-100 flex items-start space-x-2">
-                    <span className="text-xs mt-0.5">💡</span>
-                    <div className="text-[11px] text-amber-900 leading-relaxed">
-                      <strong>Operator Tip:</strong> {guide.proTip}
-                    </div>
-                  </div>
+              <div className="space-y-3">
+                <span className="text-[9px] uppercase tracking-widest font-extrabold text-slate-400 font-mono block">Clearance Access:</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {currentRoleSpec.tabsAllowed.map((tab, idx) => (
+                    <span key={idx} className="bg-blue-50 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded border border-blue-100">
+                      {tab}
+                    </span>
+                  ))}
                 </div>
-              );
-            })
-          )}
+              </div>
+
+              <div className="space-y-3.5 pt-2 border-t border-slate-100">
+                <span className="text-[9px] uppercase tracking-widest font-extrabold text-slate-400 font-mono block">Operational Scope:</span>
+                
+                <div className="space-y-3">
+                  {currentRoleSpec.functionalities.map((func, idx) => (
+                    <div key={idx} className="space-y-0.5">
+                      <div className="flex items-center space-x-1.5">
+                        <span className="text-blue-500 text-[10px] font-bold">●</span>
+                        <span className="text-xs font-bold text-slate-800 leading-tight">{func.name}</span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 pl-3 leading-relaxed">{func.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* INTERACTIVE LEARNING CHECKLIST CARD */}
+            <div className="bg-gradient-to-br from-slate-900 to-slate-950 text-slate-200 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4 text-left">
+              <div className="flex items-center space-x-2 border-b border-slate-800 pb-3 justify-between">
+                <div className="flex items-center space-x-2">
+                  <ClipboardCheck className="w-4.5 h-4.5 text-emerald-400 shrink-0" />
+                  <h3 className="text-xs font-extrabold text-white uppercase tracking-wider font-sans">Hands-On Practice Checklist</h3>
+                </div>
+                <span className="bg-slate-800 text-emerald-300 font-mono font-bold text-[9px] px-2 py-0.5 rounded border border-slate-700">
+                  {Object.keys(checklist).filter(k => k.startsWith(userRole[0]) && checklist[k]).length} / {currentRoleSpec.trainingTasks.length}
+                </span>
+              </div>
+
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                Complete these physical exercises on your terminal to qualify for today's active registers. Click checkboxes to save your progress!
+              </p>
+
+              <div className="space-y-3 pt-2">
+                {currentRoleSpec.trainingTasks.map((task) => {
+                  const isChecked = !!checklist[task.id];
+                  return (
+                    <div 
+                      key={task.id}
+                      onClick={() => toggleChecklistItem(task.id)}
+                      className="flex items-start space-x-2.5 cursor-pointer select-none group"
+                    >
+                      <button 
+                        type="button" 
+                        className="shrink-0 mt-0.5 text-slate-500 group-hover:text-slate-300 transition-colors"
+                      >
+                        {isChecked ? (
+                          <CheckSquare className="w-4 h-4 text-emerald-400" />
+                        ) : (
+                          <Square className="w-4 h-4 text-slate-600" />
+                        )}
+                      </button>
+                      <span className={`text-[11px] leading-relaxed transition-all ${isChecked ? 'text-slate-500 line-through' : 'text-slate-300 font-medium'}`}>
+                        {task.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+          </div>
+
+          {/* SOP WALKTHROUGH DOCUMENTATION LISTING (RIGHT COLUMNS) */}
+          <div className="lg:col-span-2 space-y-6">
+            
+            {/* Search inputs */}
+            <div className="relative">
+              <Search className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder={`Search guides matching ${userName.split(' ')[0]} clearance...`}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-white text-slate-800 placeholder-slate-400 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/10 font-sans shadow-2xs"
+                id="tutorial-search-input-desktop"
+              />
+            </div>
+
+            {/* Guides loop */}
+            <div className="space-y-6">
+              {filteredGuides.length === 0 ? (
+                <div className="text-center py-12 bg-white rounded-xl border border-slate-200/60 p-6 space-y-2">
+                  <HelpCircle className="w-10 h-10 text-slate-300 mx-auto animate-pulse" />
+                  <h4 className="text-sm font-bold text-slate-800">No matching SOP guide found</h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    Try searching for keywords like "credit", "warehouse", "reconciliation", or check if they belong to a higher profile clearance.
+                  </p>
+                </div>
+              ) : (
+                filteredGuides.map(guide => {
+                  const GuideIcon = guide.icon;
+                  const isAllowed = isRoleAllowed(userRole, guide.minRole);
+                  
+                  // Style configurations based on clearance level
+                  let badgeText = '🟢 Cashier Clearance Allowed';
+                  let badgeStyles = 'bg-emerald-50 text-emerald-700 border border-emerald-100';
+                  if (guide.minRole === 'manager') {
+                    badgeText = '🟡 Operations Manager Clearance Required';
+                    badgeStyles = 'bg-amber-50 text-amber-700 border border-amber-100';
+                  } else if (guide.minRole === 'admin') {
+                    badgeText = '🔴 System Administrator Clearance Required';
+                    badgeStyles = 'bg-rose-50 text-rose-700 border border-rose-100';
+                  }
+
+                  return (
+                    <div 
+                      key={guide.id} 
+                      className={`bg-white rounded-xl border p-5 sm:p-6 shadow-2xs space-y-4 hover:shadow-xs transition-all relative ${
+                        isAllowed ? 'border-slate-200' : 'border-slate-200 opacity-60 bg-slate-50/50'
+                      }`}
+                      id={`tutorial-guide-${guide.id}`}
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3">
+                        <div className="flex items-center space-x-3 text-left">
+                          <div className={`p-2.5 rounded-xl shrink-0 ${guide.iconBg}`}>
+                            <GuideIcon className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <span className="text-[9px] uppercase tracking-widest font-extrabold text-blue-600 block font-mono">
+                              {guide.category} SOP recipe
+                            </span>
+                            <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-tight">{guide.title}</h3>
+                          </div>
+                        </div>
+
+                        <span className={`text-[9px] uppercase tracking-wider font-extrabold px-2 py-1 rounded font-mono self-start sm:self-center shrink-0 ${badgeStyles}`}>
+                          {badgeText}
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-slate-500 leading-relaxed font-medium text-left">
+                        {guide.description}
+                      </p>
+
+                      {/* Locked Feature Warning */}
+                      {!isAllowed && (
+                        <div className="bg-rose-500/5 border border-rose-500/20 p-3.5 rounded-lg flex items-start space-x-2.5 text-left">
+                          <Lock className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                          <div className="text-[10px] text-rose-900 leading-relaxed">
+                            <strong className="block font-bold">⚠️ Security Clearance Restriction</strong>
+                            This standard operating procedure is restricted from your profile's live workspace. The corresponding tabs/menus (e.g. Backups, Analytics) have been automatically locked out of your screen to prevent unauthorized database transactions.
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Step Checklist */}
+                      <div className="space-y-3.5 text-left">
+                        <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 font-mono block">Action Steps Workflow:</span>
+                        
+                        <div className="space-y-3">
+                          {guide.steps.map((step, idx) => (
+                            <div key={idx} className="flex items-start space-x-3">
+                              <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5 font-mono">
+                                {idx + 1}
+                              </span>
+                              <div className="text-xs leading-relaxed">
+                                <span className="font-bold text-slate-800 block">{step.title}</span>
+                                <span className="text-slate-500 font-medium block mt-0.5">{step.detail}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Pro tip block */}
+                      <div className="mt-4 pt-3 border-t border-slate-100 bg-amber-50/30 p-3 rounded-lg border border-amber-100/50 flex items-start space-x-2 text-left">
+                        <span className="text-xs mt-0.5">💡</span>
+                        <div className="text-[11px] text-amber-900 leading-relaxed">
+                          <strong>Operator Blueprint:</strong> {guide.proTip}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+          </div>
+
         </div>
 
-        {/* Extra FAQ / Special instructions section */}
-        <div className="bg-slate-900 text-slate-100 rounded-xl p-5 sm:p-6 border border-slate-800 space-y-4">
+        {/* Dynamic Role FAQ Card */}
+        <div className="bg-slate-900 text-slate-100 rounded-xl p-5 sm:p-6 border border-slate-800 space-y-4 text-left">
           <div className="flex items-center space-x-2 border-b border-slate-800 pb-3">
             <HelpCircle className="w-4.5 h-4.5 text-blue-400" />
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">Terminal Operational Frequently Asked Questions</h3>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-200">Clearance-Based Frequently Asked Questions</h3>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-xs text-slate-300 leading-relaxed font-medium">
+            
             <div className="bg-slate-950/40 p-4 rounded-lg border border-slate-800 space-y-1.5">
-              <span className="font-bold text-white block">Q: How do I change the default currency prefix?</span>
+              <span className="font-bold text-white block">Q: How do we change default Operator Passcodes?</span>
               <p className="text-slate-400 text-[11px]">
-                The default currency prefix has been locked to Cedis (<strong>{currency}</strong>) according to your workspace settings. You can review store details in the onboarding file settings at any time.
+                Passcode values (e.g. <strong>"admin123"</strong>) are secured in local client configurations. To modify operator rosters or passcodes, an <strong>Administrator</strong> must go to settings and rewrite the Profile Security registry.
               </p>
             </div>
 
             <div className="bg-slate-950/40 p-4 rounded-lg border border-slate-800 space-y-1.5">
-              <span className="font-bold text-white block">Q: Does MyShop POS need internet connection?</span>
+              <span className="font-bold text-white block">Q: Why are certain navigation buttons hidden from my bottom bar?</span>
               <p className="text-slate-400 text-[11px]">
-                No! The entire suite operates 100% offline. All catalog additions, stock logs, customer ledgers, and configurations are securely saved in your browser's persistent IndexedDB local cache.
+                MyShop Desk implements strict active role filters. Retail Cashiers are restricted to Checkout, Credits, and Help. Store Managers unlock Stock Rooms and Analytics. Only Administrators gain full Backups access.
               </p>
             </div>
 
             <div className="bg-slate-950/40 p-4 rounded-lg border border-slate-800 space-y-1.5">
-              <span className="font-bold text-white block">Q: How do I key in details of people purchasing on credit?</span>
+              <span className="font-bold text-white block">Q: Where do we log manual cash ledger repayments?</span>
               <p className="text-slate-400 text-[11px]">
-                Go to <strong>Cash Checkout</strong>, add items to the cart, select <strong>"Store Credit / Ledger"</strong> as the payment method, type the person's name and phone number, and click record. You can manage them later in the <strong>Credit Ledger</strong>.
+                Go to the <strong>Store Credit Ledger</strong>. Search for the customer\'s name, click <strong>"Process Repayment"</strong>, input their deposit cash, and the system dynamically voids corresponding debt balances.
               </p>
             </div>
 
             <div className="bg-slate-950/40 p-4 rounded-lg border border-slate-800 space-y-1.5">
-              <span className="font-bold text-white block">Q: Can I backup or move my data to another PC?</span>
+              <span className="font-bold text-white block">Q: Does the offline cache expire or get deleted?</span>
               <p className="text-slate-400 text-[11px]">
-                Yes! Head to the <strong>Database Backups</strong> tab, click <strong>"Download JSON Backup"</strong>. Take that file to any other terminal running MyShop, and upload it using the restore system. Your entire registry restores instantly.
+                The local IndexedDB cache does not expire automatically. However, clearing your browser\'s temporary storage or hard drives will wipe the database. Ensure your <strong>Administrator</strong> performs weekly JSON backups to avoid loss!
               </p>
             </div>
+
           </div>
         </div>
 
@@ -389,24 +678,5 @@ export default function AppTutorial({ onClose, currency }: AppTutorialProps) {
         )}
       </div>
     </div>
-  );
-}
-
-function SparklesIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth={2}
-      stroke="currentColor"
-      {...props}
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M9.813 15.904L9 21l-.813-5.096L3 15l5.096-.813L9 9l.813 5.187L15 15l-5.187.904zM18 10.5l-.5 2.5-2.5-.5.5-2.5 2.5.5z"
-      />
-    </svg>
   );
 }

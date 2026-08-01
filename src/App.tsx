@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Product, Sale, StoreSettings, StockLog, AppState, CreditRecord } from './types';
+import { Product, Sale, StoreSettings, StockLog, AppState, CreditRecord, VoidedSaleRecord } from './types';
 import { DEFAULT_SETTINGS, SAMPLE_PRODUCTS } from './initialData';
 import SetupWizard from './components/SetupWizard';
 import CheckoutTerminal from './components/CheckoutTerminal';
@@ -9,17 +9,22 @@ import BackupManager from './components/BackupManager';
 import CreditsManager from './components/CreditsManager';
 import BrandLogo from './components/BrandLogo';
 import AppTutorial from './components/AppTutorial';
+import Win7DiagnosticsModal from './components/Win7DiagnosticsModal';
+import { useTheme } from './ThemeContext';
 import { 
   Store, ShoppingBag, Package, TrendingUp, Database, AlertCircle, Sparkles, HelpCircle,
-  Lock, Unlock, Shield, ShieldCheck, UserCheck, Terminal, Save, ArrowLeft, ArrowRight, Check, CheckSquare, Square, LogOut, Printer, FileSpreadsheet, RefreshCw, Smartphone, Laptop, BookOpen
+  Lock, Unlock, Shield, ShieldCheck, UserCheck, Terminal, Save, ArrowLeft, ArrowRight, Check, CheckSquare, Square, LogOut, Printer, FileSpreadsheet, RefreshCw, Smartphone, Laptop, BookOpen,
+  Sun, Moon, Monitor, Cpu
 } from 'lucide-react';
 
 export default function App() {
+  const { theme, toggleTheme } = useTheme();
   // Core App States
   const [products, setProducts] = useState<Product[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [stockLogs, setStockLogs] = useState<StockLog[]>([]);
   const [credits, setCredits] = useState<CreditRecord[]>([]);
+  const [voidedSales, setVoidedSales] = useState<VoidedSaleRecord[]>([]);
   const [settings, setSettings] = useState<StoreSettings>({ ...DEFAULT_SETTINGS });
   const [isLoaded, setIsLoaded] = useState(false);
 
@@ -43,6 +48,28 @@ export default function App() {
   const [showSaveFeedback, setShowSaveFeedback] = useState(false);
   const [showPWAHelp, setShowPWAHelp] = useState(false);
   const [showOfficeControlsHelp, setShowOfficeControlsHelp] = useState(false);
+  const [showWin7Diagnostics, setShowWin7Diagnostics] = useState(false);
+
+  // Global hotkeys for Alt+D (theme) and F10 (tab cycle)
+  useEffect(() => {
+    const handleGlobalAppKeys = (e: KeyboardEvent) => {
+      if (e.altKey && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault();
+        toggleTheme();
+      } else if (e.key === 'F10') {
+        e.preventDefault();
+        setActiveTab(prev => {
+          const tabs: ('checkout' | 'inventory' | 'credits' | 'analytics' | 'backups' | 'tutorial')[] = [
+            'checkout', 'inventory', 'credits', 'analytics', 'backups', 'tutorial'
+          ];
+          const currIdx = tabs.indexOf(prev);
+          return tabs[(currIdx + 1) % tabs.length];
+        });
+      }
+    };
+    window.addEventListener('keydown', handleGlobalAppKeys);
+    return () => window.removeEventListener('keydown', handleGlobalAppKeys);
+  }, [toggleTheme]);
 
   // Fetch operator profiles
   const availableProfiles = settings.profiles || [
@@ -130,11 +157,13 @@ export default function App() {
       const storedSettings = localStorage.getItem('myshop_settings');
       const storedLogs = localStorage.getItem('myshop_stock_logs');
       const storedCredits = localStorage.getItem('myshop_credits');
+      const storedVoided = localStorage.getItem('myshop_voided_sales');
 
       if (storedProducts) setProducts(JSON.parse(storedProducts));
       if (storedSales) setSales(JSON.parse(storedSales));
       if (storedLogs) setStockLogs(JSON.parse(storedLogs));
       if (storedCredits) setCredits(JSON.parse(storedCredits));
+      if (storedVoided) setVoidedSales(JSON.parse(storedVoided));
       
       let loadedSettings = { ...DEFAULT_SETTINGS };
       if (storedSettings) {
@@ -195,10 +224,11 @@ export default function App() {
       localStorage.setItem('myshop_settings', JSON.stringify(settings));
       localStorage.setItem('myshop_stock_logs', JSON.stringify(stockLogs));
       localStorage.setItem('myshop_credits', JSON.stringify(credits));
+      localStorage.setItem('myshop_voided_sales', JSON.stringify(voidedSales));
     } catch (e) {
       console.error("Failed to save state to LocalStorage:", e);
     }
-  }, [products, sales, settings, stockLogs, credits, isLoaded]);
+  }, [products, sales, settings, stockLogs, credits, voidedSales, isLoaded]);
 
   // Save session states to localStorage whenever they change
   useEffect(() => {
@@ -580,11 +610,166 @@ export default function App() {
       }));
     }
 
+    const voidRecord: VoidedSaleRecord = {
+      id: `void_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      voidTimestamp: Date.now(),
+      voidedBy: activeProfile?.name || 'Store Operator',
+      restocked: restock,
+      sale: saleToDelete,
+      reason: 'Cashier receipt entry void'
+    };
+
+    setVoidedSales(prev => [voidRecord, ...prev]);
     setSales(prev => prev.filter(s => s.id !== saleId));
 
     if (stockLogsToAdd.length > 0) {
       setStockLogs(prev => [...prev, ...stockLogsToAdd]);
     }
+  };
+
+  const handleDeleteBulkSales = (saleIds: string[], restock: boolean = true) => {
+    if (!saleIds || saleIds.length === 0) return;
+
+    const salesToDelete = sales.filter(s => saleIds.includes(s.id));
+    if (salesToDelete.length === 0) return;
+
+    const stockLogsToAdd: StockLog[] = [];
+
+    if (restock) {
+      const restockMap: Record<string, number> = {};
+      salesToDelete.forEach(sale => {
+        sale.items.forEach(item => {
+          restockMap[item.productId] = (restockMap[item.productId] || 0) + item.quantity;
+        });
+      });
+
+      setProducts(prev => prev.map(p => {
+        const qtyToRestock = restockMap[p.id];
+        if (qtyToRestock && qtyToRestock > 0) {
+          const newRetailStock = p.retailStock + qtyToRestock;
+          stockLogsToAdd.push({
+            id: `log_sale_bulk_delete_${p.id}_${Date.now()}`,
+            productId: p.id,
+            productName: p.name,
+            timestamp: Date.now(),
+            type: 'adjustment',
+            quantity: qtyToRestock,
+            notes: `Bulk voided ${salesToDelete.length} cashier receipt entry errors. Restocked ${qtyToRestock} units to retail shelf.`
+          });
+          return {
+            ...p,
+            retailStock: newRetailStock
+          };
+        }
+        return p;
+      }));
+    }
+
+    const newVoidRecords: VoidedSaleRecord[] = salesToDelete.map(s => ({
+      id: `void_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      voidTimestamp: Date.now(),
+      voidedBy: activeProfile?.name || 'Store Operator',
+      restocked: restock,
+      sale: s,
+      reason: 'Bulk audit log void'
+    }));
+
+    setVoidedSales(prev => [...newVoidRecords, ...prev]);
+
+    const deleteSet = new Set(saleIds);
+    setSales(prev => prev.filter(s => !deleteSet.has(s.id)));
+
+    if (stockLogsToAdd.length > 0) {
+      setStockLogs(prev => [...prev, ...stockLogsToAdd]);
+    }
+  };
+
+  const handleRestoreSale = (voidId: string) => {
+    const targetVoid = voidedSales.find(v => v.id === voidId);
+    if (!targetVoid) return;
+
+    // Restore sale to active sales array
+    setSales(prev => {
+      if (prev.some(s => s.id === targetVoid.sale.id)) return prev;
+      return [targetVoid.sale, ...prev];
+    });
+
+    // If restocked previously, re-deduct items from retail stock
+    if (targetVoid.restocked) {
+      const stockLogsToAdd: StockLog[] = [];
+      setProducts(prev => prev.map(p => {
+        const itemInSale = targetVoid.sale.items.find(i => i.productId === p.id);
+        if (itemInSale) {
+          const newStock = Math.max(0, p.retailStock - itemInSale.quantity);
+          stockLogsToAdd.push({
+            id: `log_restore_sale_${p.id}_${Date.now()}`,
+            productId: p.id,
+            productName: p.name,
+            timestamp: Date.now(),
+            type: 'adjustment',
+            quantity: -itemInSale.quantity,
+            notes: `Restored voided receipt ${targetVoid.sale.id}. Deducted ${itemInSale.quantity} units back from retail shelf.`
+          });
+          return { ...p, retailStock: newStock };
+        }
+        return p;
+      }));
+      if (stockLogsToAdd.length > 0) {
+        setStockLogs(prev => [...prev, ...stockLogsToAdd]);
+      }
+    }
+
+    setVoidedSales(prev => prev.filter(v => v.id !== voidId));
+  };
+
+  const handleRestoreBulkSales = (voidIds: string[]) => {
+    if (!voidIds || voidIds.length === 0) return;
+    const targets = voidedSales.filter(v => voidIds.includes(v.id));
+    if (targets.length === 0) return;
+
+    const salesToRestore = targets.map(t => t.sale);
+    const voidSet = new Set(voidIds);
+
+    setSales(prev => {
+      const existingIds = new Set(prev.map(s => s.id));
+      const toAdd = salesToRestore.filter(s => !existingIds.has(s.id));
+      return [...toAdd, ...prev];
+    });
+
+    const restockedTargets = targets.filter(t => t.restocked);
+    if (restockedTargets.length > 0) {
+      const deductMap: Record<string, number> = {};
+      restockedTargets.forEach(target => {
+        target.sale.items.forEach(item => {
+          deductMap[item.productId] = (deductMap[item.productId] || 0) + item.quantity;
+        });
+      });
+
+      const stockLogsToAdd: StockLog[] = [];
+      setProducts(prev => prev.map(p => {
+        const qtyToDeduct = deductMap[p.id];
+        if (qtyToDeduct && qtyToDeduct > 0) {
+          const newStock = Math.max(0, p.retailStock - qtyToDeduct);
+          stockLogsToAdd.push({
+            id: `log_restore_bulk_${p.id}_${Date.now()}`,
+            productId: p.id,
+            productName: p.name,
+            timestamp: Date.now(),
+            type: 'adjustment',
+            quantity: -qtyToDeduct,
+            notes: `Bulk restored ${restockedTargets.length} voided receipt logs. Deducted ${qtyToDeduct} units back from retail shelf.`
+          });
+          return { ...p, retailStock: newStock };
+        }
+        return p;
+      }));
+
+      if (stockLogsToAdd.length > 0) {
+        setStockLogs(prev => [...prev, ...stockLogsToAdd]);
+      }
+    }
+
+    setVoidedSales(prev => prev.filter(v => !voidSet.has(v.id)));
   };
 
   const handleLogDamagedGoods = (
@@ -1028,7 +1213,7 @@ export default function App() {
 
   // 3. STAGE C: MAIN WORKSPACE RENDER
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col text-slate-800 font-sans" id="myshop-main-layout">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col text-slate-800 dark:text-slate-100 font-sans transition-colors duration-200" id="myshop-main-layout">
       
       {/* EXCEL/OFFICE EMULATED TOP DESKTOP WINDOW BAR */}
       <div className="bg-slate-800 text-slate-300 h-9 flex items-center justify-between px-4 text-xs font-medium border-b border-slate-900 select-none print:hidden shrink-0 relative z-50" id="office-title-bar">
@@ -1081,6 +1266,39 @@ export default function App() {
 
         {/* Window controls & PWA action */}
         <div className="flex items-center space-x-2">
+          {/* Theme Toggle Button */}
+          <button
+            onClick={toggleTheme}
+            className="bg-slate-700/60 hover:bg-slate-700 text-slate-300 font-bold px-2.5 py-0.5 rounded text-[10px] flex items-center space-x-1.5 border border-slate-600 transition-all cursor-pointer"
+            id="office-theme-toggle-btn"
+            type="button"
+            title={`Switch to ${theme === 'light' ? 'Dark' : 'Light'} Mode`}
+          >
+            {theme === 'light' ? (
+              <>
+                <Moon className="w-3 h-3 text-sky-400 shrink-0" />
+                <span>Dark Mode</span>
+              </>
+            ) : (
+              <>
+                <Sun className="w-3 h-3 text-amber-400 shrink-0" />
+                <span>Light Mode</span>
+              </>
+            )}
+          </button>
+
+          {/* Win7+ POS Diagnostics Button */}
+          <button
+            onClick={() => setShowWin7Diagnostics(true)}
+            className="bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 font-bold px-2 py-0.5 rounded text-[10px] flex items-center space-x-1 border border-emerald-500/30 transition-all cursor-pointer"
+            id="win7-diagnostics-btn"
+            type="button"
+            title="Open Windows 7+ System Compatibility & POS Hardware Diagnostics"
+          >
+            <Monitor className="w-3 h-3 text-emerald-400" />
+            <span>Win7+ POS Ready</span>
+          </button>
+
           {/* PWA desktop trigger */}
           <button
             onClick={() => setShowPWAHelp(true)}
@@ -1236,11 +1454,11 @@ export default function App() {
           </header>
 
           {/* DESKTOP STATUS BAR HEADER - Desktop Only (Print Hidden) */}
-          <header className="h-16 bg-white border-b border-slate-200 px-8 items-center justify-between hidden md:flex shrink-0 print:hidden" id="myshop-desktop-header">
+          <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-8 items-center justify-between hidden md:flex shrink-0 print:hidden transition-colors duration-200" id="myshop-desktop-header">
             <div className="flex items-center gap-4 text-sm font-medium">
-              <span className="text-slate-500 font-semibold">{settings.storeName || 'MyShop'} Management Suite</span>
-              <span className="text-slate-300">/</span>
-              <span className="text-blue-600 font-extrabold text-xs uppercase tracking-wider">
+              <span className="text-slate-500 dark:text-slate-300 font-semibold">{settings.storeName || 'MyShop'} Management Suite</span>
+              <span className="text-slate-300 dark:text-slate-700">/</span>
+              <span className="text-blue-600 dark:text-blue-400 font-extrabold text-xs uppercase tracking-wider">
                 {activeTab === 'checkout' ? 'Cash Checkout' :
                  activeTab === 'credits' ? 'Store Credit Ledger' :
                  activeTab === 'inventory' ? 'Stock Room' :
@@ -1250,17 +1468,17 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2 text-xs font-semibold px-3 py-1.5 bg-slate-100 rounded-full border border-slate-200">
+              <div className="flex items-center gap-2 text-xs font-semibold px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-750">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span className="text-slate-600">Hardware Thermal Printer Active</span>
+                <span className="text-slate-600 dark:text-slate-300">Hardware Thermal Printer Active</span>
               </div>
               <div className="text-right">
                 <span className="text-[10px] text-slate-400 block font-mono leading-none">Register Session</span>
-                <span className="text-xs text-blue-600 font-mono font-bold leading-none mt-1 block">
+                <span className="text-xs text-blue-600 dark:text-blue-400 font-mono font-bold leading-none mt-1 block">
                   {new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
                 </span>
               </div>
-              <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-sm border border-blue-200 shadow-sm uppercase font-mono">
+              <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 flex items-center justify-center font-bold text-sm border border-blue-200 dark:border-blue-800 shadow-sm uppercase font-mono">
                 {activeProfile.name[0]}
               </div>
             </div>
@@ -1312,6 +1530,10 @@ export default function App() {
                   currency={settings.currency}
                   onUpdateSale={handleUpdateSale}
                   onDeleteSale={handleDeleteSale}
+                  onDeleteBulkSales={handleDeleteBulkSales}
+                  voidedSales={voidedSales}
+                  onRestoreSale={handleRestoreSale}
+                  onRestoreBulkSales={handleRestoreBulkSales}
                   activeProfile={activeProfile}
                 />
               )}
@@ -1372,20 +1594,20 @@ export default function App() {
           </nav>
 
           {/* FOOTER - Hidden on Print */}
-          <footer className="bg-white border-t border-slate-200/60 py-3 text-center text-xs text-slate-400 shrink-0 hidden md:block print:hidden" id="myshop-main-footer">
+          <footer className="bg-white dark:bg-slate-900 border-t border-slate-200/60 dark:border-slate-800 py-3 text-center text-xs text-slate-400 dark:text-slate-500 shrink-0 hidden md:block print:hidden transition-colors duration-200" id="myshop-main-footer">
             <div className="max-w-7xl mx-auto px-8 flex flex-col sm:flex-row items-center justify-between gap-2">
               <div className="flex items-center space-x-1">
-                <Store className="w-3.5 h-3.5 text-slate-400" />
-                <span>&copy; 2026 <strong>{settings.storeName || 'MyShop'} Desk</strong>. Full Local Offline Desktop Session.</span>
+                <Store className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                <span>&copy; 2026 <strong className="text-slate-600 dark:text-slate-400">{settings.storeName || 'MyShop'} Desk</strong>. Full Local Offline Desktop Session.</span>
               </div>
-              <div className="flex items-center space-x-3.5 text-[11px] font-mono text-slate-400">
+              <div className="flex items-center space-x-3.5 text-[11px] font-mono text-slate-400 dark:text-slate-500">
                 <span className="flex items-center space-x-1">
                   <Sparkles className="w-3 h-3 text-blue-500 animate-pulse" />
                   <span>Receipt Hardware Wedge Connected</span>
                 </span>
-                <span className="text-slate-200">|</span>
+                <span className="text-slate-200 dark:text-slate-800">|</span>
                 <span className="flex items-center space-x-1">
-                  <HelpCircle className="w-3 h-3 text-slate-400" />
+                  <HelpCircle className="w-3 h-3 text-slate-400 dark:text-slate-500" />
                   <span>Dual Sandbox Local Registry Mode</span>
                 </span>
               </div>
@@ -1478,6 +1700,14 @@ export default function App() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* 6. MODAL: WINDOWS 7+ SYSTEM COMPATIBILITY & POS HARDWARE DIAGNOSTICS */}
+      {showWin7Diagnostics && (
+        <Win7DiagnosticsModal
+          onClose={() => setShowWin7Diagnostics(false)}
+          settings={settings}
+        />
       )}
 
     </div>

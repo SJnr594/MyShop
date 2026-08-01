@@ -36,6 +36,15 @@ export interface Sale {
   dueDate?: number;
 }
 
+export interface VoidedSaleRecord {
+  id: string;
+  voidTimestamp: number;
+  voidedBy?: string;
+  restocked: boolean;
+  sale: Sale;
+  reason?: string;
+}
+
 export interface CreditPayment {
   id: string;
   amount: number;
@@ -119,4 +128,5 @@ export interface AppState {
   settings: StoreSettings;
   stockLogs: StockLog[];
   credits?: CreditRecord[];
+  voidedSales?: VoidedSaleRecord[];
 }

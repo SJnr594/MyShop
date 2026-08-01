@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Sale, Product } from '../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Sale, Product, VoidedSaleRecord } from '../types';
 import { 
   TrendingUp, 
   Users, 
@@ -24,7 +24,15 @@ import {
   Plus,
   Minus,
   Save,
-  Lock
+  Lock,
+  RotateCcw,
+  Undo,
+  Archive,
+  FolderTree,
+  ChevronRight,
+  ChevronDown,
+  Layers,
+  History
 } from 'lucide-react';
 
 interface AnalyticsPanelProps {
@@ -33,17 +41,50 @@ interface AnalyticsPanelProps {
   currency: string;
   onUpdateSale?: (updatedSale: Sale) => void;
   onDeleteSale?: (saleId: string, restock: boolean) => void;
+  onDeleteBulkSales?: (saleIds: string[], restock: boolean) => void;
+  voidedSales?: VoidedSaleRecord[];
+  onRestoreSale?: (voidId: string) => void;
+  onRestoreBulkSales?: (voidIds: string[]) => void;
   activeProfile?: { id: string; name: string; role: string } | null;
 }
 
-export default function AnalyticsPanel({ sales, products, currency, onUpdateSale, onDeleteSale, activeProfile }: AnalyticsPanelProps) {
+export default function AnalyticsPanel({ 
+  sales, 
+  products, 
+  currency, 
+  onUpdateSale, 
+  onDeleteSale, 
+  onDeleteBulkSales, 
+  voidedSales = [], 
+  onRestoreSale, 
+  onRestoreBulkSales, 
+  activeProfile 
+}: AnalyticsPanelProps) {
   const [activeSubTab, setActiveSubTab] = useState<'insights' | 'receipts'>('insights');
   const [timeframe, setTimeframe] = useState<'all' | 'today' | 'week' | 'month'>('all');
   
-  // Receipt vault states
+  // Receipt vault & Audit Batch state
+  const [receiptVaultTab, setReceiptVaultTab] = useState<'active' | 'void_bin'>('active');
+  const [vaultViewMode, setVaultViewMode] = useState<'hierarchy' | 'flat'>('hierarchy');
   const [auditSearch, setAuditSearch] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('all');
+  const [cashierFilter, setCashierFilter] = useState('all');
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+
+  // Hierarchy accordion state
+  const [expandedMonths, setExpandedMonths] = useState<string[]>([]);
+  const [expandedWeeks, setExpandedWeeks] = useState<string[]>([]);
+  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
+
+  // Bulk deletion states
+  const [selectedSaleIds, setSelectedSaleIds] = useState<string[]>([]);
+  const [bulkRestock, setBulkRestock] = useState(true);
+  const [showBulkConfirmModal, setShowBulkConfirmModal] = useState(false);
+
+  // Void Bin & Restoration states
+  const [selectedVoidIds, setSelectedVoidIds] = useState<string[]>([]);
+  const [showBulkRestoreConfirmModal, setShowBulkRestoreConfirmModal] = useState(false);
+  const [selectedVoidRecord, setSelectedVoidRecord] = useState<VoidedSaleRecord | null>(null);
 
   // Edit sale states
   const [isEditing, setIsEditing] = useState(false);
@@ -260,6 +301,11 @@ export default function AnalyticsPanel({ sales, products, currency, onUpdateSale
     alert(`📢 Customer Outreach Simulation:\n\nTo contact ${customerName} (${customerPhone}), you can send this appreciation message:\n\n"${randomMsg}"`);
   };
 
+  // Extract unique cashier names from sales history for audit filtering
+  const uniqueCashiers = Array.from(new Set(
+    sales.map(s => s.cashierName).filter((name): name is string => Boolean(name && name.trim()))
+  )).sort();
+
   // 2. Receipt Vault Search & Filtering
   const matchingReceipts = sales.filter(s => {
     // Search query matches Receipt ID, Customer Name, Customer Phone, Cashier, or contains product names
@@ -273,9 +319,231 @@ export default function AnalyticsPanel({ sales, products, currency, onUpdateSale
     );
 
     const matchesPayment = paymentFilter === 'all' ? true : s.paymentMethod === paymentFilter;
+    const matchesCashier = cashierFilter === 'all' ? true : (s.cashierName === cashierFilter);
 
-    return matchesQuery && matchesPayment;
+    return matchesQuery && matchesPayment && matchesCashier;
   }).sort((a, b) => b.timestamp - a.timestamp); // Sort by newest first
+
+  // Date Helpers for Month -> Week -> Day grouping
+  const getMonthKey = (ts: number) => {
+    const d = new Date(ts);
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    return `${d.getFullYear()}-${m}`;
+  };
+
+  const getMonthLabel = (monthKey: string) => {
+    const [year, month] = monthKey.split('-');
+    const d = new Date(Number(year), Number(month) - 1, 1);
+    return d.toLocaleString('default', { month: 'long', year: 'numeric' });
+  };
+
+  const getWeekKey = (ts: number) => {
+    const d = new Date(ts);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7);
+    const week1 = new Date(d.getFullYear(), 0, 4);
+    const weekNum = 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
+    return `${d.getFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+  };
+
+  const getDayKey = (ts: number) => {
+    const d = new Date(ts);
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${m}-${day}`;
+  };
+
+  const getDayLabel = (ts: number) => {
+    return new Date(ts).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  // Build hierarchical grouping tree (Month -> Week -> Day -> Sales)
+  const groupedSalesTree = useMemo(() => {
+    const monthMap = new Map<string, {
+      monthKey: string;
+      monthLabel: string;
+      totalRevenue: number;
+      salesCount: number;
+      saleIds: string[];
+      weeks: Map<string, {
+        weekKey: string;
+        weekLabel: string;
+        totalRevenue: number;
+        salesCount: number;
+        saleIds: string[];
+        days: Map<string, {
+          dayKey: string;
+          dayLabel: string;
+          totalRevenue: number;
+          salesCount: number;
+          saleIds: string[];
+          sales: Sale[];
+        }>;
+      }>;
+    }>();
+
+    matchingReceipts.forEach(s => {
+      const mKey = getMonthKey(s.timestamp);
+      const mLabel = getMonthLabel(mKey);
+      const wKey = getWeekKey(s.timestamp);
+      const dKey = getDayKey(s.timestamp);
+      const dLabel = getDayLabel(s.timestamp);
+
+      if (!monthMap.has(mKey)) {
+        monthMap.set(mKey, {
+          monthKey: mKey,
+          monthLabel: mLabel,
+          totalRevenue: 0,
+          salesCount: 0,
+          saleIds: [],
+          weeks: new Map()
+        });
+      }
+      const mGroup = monthMap.get(mKey)!;
+      mGroup.totalRevenue += s.total;
+      mGroup.salesCount += 1;
+      mGroup.saleIds.push(s.id);
+
+      if (!mGroup.weeks.has(wKey)) {
+        const d = new Date(s.timestamp);
+        const dayOfWeek = (d.getDay() + 6) % 7;
+        const monday = new Date(d);
+        monday.setDate(d.getDate() - dayOfWeek);
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        
+        const startStr = monday.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const endStr = sunday.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const weekLabel = `${wKey.replace('-', ' ')} (${startStr} - ${endStr})`;
+
+        mGroup.weeks.set(wKey, {
+          weekKey: wKey,
+          weekLabel,
+          totalRevenue: 0,
+          salesCount: 0,
+          saleIds: [],
+          days: new Map()
+        });
+      }
+      const wGroup = mGroup.weeks.get(wKey)!;
+      wGroup.totalRevenue += s.total;
+      wGroup.salesCount += 1;
+      wGroup.saleIds.push(s.id);
+
+      if (!wGroup.days.has(dKey)) {
+        wGroup.days.set(dKey, {
+          dayKey: dKey,
+          dayLabel: dLabel,
+          totalRevenue: 0,
+          salesCount: 0,
+          saleIds: [],
+          sales: []
+        });
+      }
+      const dGroup = wGroup.days.get(dKey)!;
+      dGroup.totalRevenue += s.total;
+      dGroup.salesCount += 1;
+      dGroup.saleIds.push(s.id);
+      dGroup.sales.push(s);
+    });
+
+    return Array.from(monthMap.values()).map(m => ({
+      ...m,
+      weeks: Array.from(m.weeks.values()).map(w => ({
+        ...w,
+        days: Array.from(w.days.values()).sort((a,b) => b.dayKey.localeCompare(a.dayKey))
+      })).sort((a,b) => b.weekKey.localeCompare(a.weekKey))
+    })).sort((a,b) => b.monthKey.localeCompare(a.monthKey));
+  }, [matchingReceipts]);
+
+  useEffect(() => {
+    if (groupedSalesTree.length > 0 && expandedMonths.length === 0) {
+      setExpandedMonths([groupedSalesTree[0].monthKey]);
+      if (groupedSalesTree[0].weeks.length > 0) {
+        setExpandedWeeks([groupedSalesTree[0].weeks[0].weekKey]);
+      }
+    }
+  }, [groupedSalesTree]);
+
+  const toggleMonthExpand = (mKey: string) => {
+    setExpandedMonths(prev => 
+      prev.includes(mKey) ? prev.filter(k => k !== mKey) : [...prev, mKey]
+    );
+  };
+
+  const toggleWeekExpand = (wKey: string) => {
+    setExpandedWeeks(prev => 
+      prev.includes(wKey) ? prev.filter(k => k !== wKey) : [...prev, wKey]
+    );
+  };
+
+  const handleTriggerPeriodBulkVoid = (saleIds: string[], e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!saleIds || saleIds.length === 0) return;
+    setSelectedSaleIds(saleIds);
+    setShowBulkConfirmModal(true);
+  };
+
+  // Void bin helpers
+  const toggleSelectVoidId = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedVoidIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllVoided = () => {
+    const allIds = voidedSales.map(v => v.id);
+    const allSelected = allIds.length > 0 && allIds.every(id => selectedVoidIds.includes(id));
+    if (allSelected) {
+      setSelectedVoidIds([]);
+    } else {
+      setSelectedVoidIds(allIds);
+    }
+  };
+
+  const handleConfirmBulkRestore = () => {
+    if (selectedVoidIds.length === 0) return;
+    if (onRestoreBulkSales) {
+      onRestoreBulkSales(selectedVoidIds);
+    } else if (onRestoreSale) {
+      selectedVoidIds.forEach(id => onRestoreSale(id));
+    }
+    setSelectedVoidIds([]);
+    setShowBulkRestoreConfirmModal(false);
+  };
+
+  // Helper toggle for bulk selection
+  const toggleSelectSaleId = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedSaleIds(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllMatching = () => {
+    const matchingIds = matchingReceipts.map(s => s.id);
+    const allSelected = matchingIds.length > 0 && matchingIds.every(id => selectedSaleIds.includes(id));
+    if (allSelected) {
+      setSelectedSaleIds(prev => prev.filter(id => !matchingIds.includes(id)));
+    } else {
+      setSelectedSaleIds(prev => Array.from(new Set([...prev, ...matchingIds])));
+    }
+  };
+
+  const handleConfirmBulkDelete = () => {
+    if (selectedSaleIds.length === 0) return;
+    const count = selectedSaleIds.length;
+    if (onDeleteBulkSales) {
+      onDeleteBulkSales(selectedSaleIds, bulkRestock);
+    } else if (onDeleteSale) {
+      selectedSaleIds.forEach(id => onDeleteSale(id, bulkRestock));
+    }
+    setSelectedSale(null);
+    setSelectedSaleIds([]);
+    setShowBulkConfirmModal(false);
+    alert(`Successfully voided and deleted ${count} cashier receipt entries from database.`);
+  };
 
   const triggerReceiptPrint = () => {
     if (!selectedSale) return;
@@ -648,105 +916,455 @@ export default function AnalyticsPanel({ sales, products, currency, onUpdateSale
 
       {/* TAB CONTAINER 2: SECURE RECEIPT VAULT & LOSS PREVENTION AUDIT */}
       {activeSubTab === 'receipts' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fadeIn" id="receipt-vault-workspace">
+        <div className="space-y-4 animate-fadeIn" id="receipt-vault-workspace">
           
-          {/* Left Column: Search & Filtered Invoice List (cols 5) */}
-          <div className="lg:col-span-5 flex flex-col space-y-4">
-            
-            {/* Search Input Card */}
-            <div className="bg-white p-4 rounded-xl border border-slate-200/60 shadow-xs space-y-3">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider font-extrabold block">Loss Prevention Audit Filter</span>
-              
-              <div className="relative">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={auditSearch}
-                  onChange={(e) => setAuditSearch(e.target.value)}
-                  placeholder="Receipt #, customer, cashier, product..."
-                  className="w-full text-xs pl-9 pr-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-800 bg-slate-50/50 font-medium"
-                />
-              </div>
+          {/* Top Vault Sub-Tab & View Controls Bar */}
+          <div className="flex flex-wrap items-center justify-between bg-white p-3 rounded-xl border border-slate-200/60 shadow-xs gap-3">
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => { setReceiptVaultTab('active'); setSelectedSale(null); }}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+                  receiptVaultTab === 'active'
+                    ? 'bg-slate-900 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                <Receipt className="w-3.5 h-3.5" />
+                <span>Active Receipts Ledger</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${receiptVaultTab === 'active' ? 'bg-slate-800 text-slate-200' : 'bg-slate-200 text-slate-700'}`}>
+                  {matchingReceipts.length}
+                </span>
+              </button>
 
-              {/* Payment filter select */}
-              <div className="flex items-center space-x-2 text-xs">
-                <span className="text-slate-400 font-medium text-[11px] shrink-0">Method:</span>
-                <select
-                  value={paymentFilter}
-                  onChange={(e) => setPaymentFilter(e.target.value)}
-                  className="bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-slate-700 w-full focus:outline-none"
-                >
-                  <option value="all">All Payment Methods</option>
-                  <option value="cash">Cash Tendered</option>
-                  <option value="card">Credit/Debit Card</option>
-                  <option value="mobile_money">Mobile Transfer</option>
-                  <option value="credit">Store Credit</option>
-                </select>
-              </div>
+              <button
+                type="button"
+                onClick={() => { setReceiptVaultTab('void_bin'); setSelectedSale(null); }}
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+                  receiptVaultTab === 'void_bin'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200/60'
+                }`}
+              >
+                <Undo className="w-3.5 h-3.5" />
+                <span>Voided Receipts Trash & Audit Bin</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${receiptVaultTab === 'void_bin' ? 'bg-rose-700 text-white' : 'bg-rose-200 text-rose-800'}`}>
+                  {voidedSales.length}
+                </span>
+              </button>
             </div>
 
-            {/* List of Receipts */}
-            <div className="bg-white rounded-xl border border-slate-200/60 shadow-xs overflow-hidden flex-1 min-h-[400px] max-h-[550px] overflow-y-auto flex flex-col">
-              <div className="p-3 bg-slate-50 border-b border-slate-100 flex justify-between items-center text-[10px] text-slate-500 font-bold uppercase tracking-wider">
-                <span>Matching Sales Logs ({matchingReceipts.length})</span>
-                <span>Sorted: Newest</span>
+            {receiptVaultTab === 'active' && (
+              <div className="flex items-center space-x-2 bg-slate-100 p-1 rounded-lg text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => setVaultViewMode('hierarchy')}
+                  className={`px-2.5 py-1 rounded-md transition-all flex items-center space-x-1.5 text-[11px] font-bold cursor-pointer ${
+                    vaultViewMode === 'hierarchy' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <FolderTree className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Month → Week → Day Hierarchy</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVaultViewMode('flat')}
+                  className={`px-2.5 py-1 rounded-md transition-all flex items-center space-x-1.5 text-[11px] font-bold cursor-pointer ${
+                    vaultViewMode === 'flat' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Filter className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Flat List View</span>
+                </button>
               </div>
+            )}
+          </div>
 
-              {matchingReceipts.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400 space-y-2">
-                  <Receipt className="w-10 h-10 text-slate-300 stroke-1" />
-                  <p className="text-xs font-semibold text-slate-600">No matching receipts found</p>
-                  <p className="text-[10px] max-w-xs text-slate-400">
-                    Try refining your search keyword or selecting "All Payment Methods" above.
-                  </p>
+          {/* MAIN ACTIVE RECEIPTS LEDGER VIEW */}
+          {receiptVaultTab === 'active' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              
+              {/* Left Column: Search & Hierarchy / Flat List (cols 5) */}
+              <div className="lg:col-span-5 flex flex-col space-y-4">
+                
+                {/* Search & Audit Filters Card */}
+                <div className="bg-white p-4 rounded-xl border border-slate-200/60 shadow-xs space-y-3">
+                  <span className="text-[10px] text-slate-400 uppercase tracking-wider font-extrabold block">Loss Prevention & Cashier Audit Filter</span>
+                  
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={auditSearch}
+                      onChange={(e) => setAuditSearch(e.target.value)}
+                      placeholder="Receipt #, customer, cashier, product..."
+                      className="w-full text-xs pl-9 pr-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:border-slate-800 bg-slate-50/50 font-medium"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    {/* Cashier Filter Select */}
+                    <div>
+                      <label className="text-slate-400 font-medium text-[10px] block mb-1">Filter Cashier:</label>
+                      <select
+                        value={cashierFilter}
+                        onChange={(e) => setCashierFilter(e.target.value)}
+                        className="bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-slate-700 w-full focus:outline-none"
+                      >
+                        <option value="all">All Cashiers ({sales.length})</option>
+                        {uniqueCashiers.map(cName => (
+                          <option key={cName} value={cName}>
+                            {cName} ({sales.filter(s => s.cashierName === cName).length})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Payment filter select */}
+                    <div>
+                      <label className="text-slate-400 font-medium text-[10px] block mb-1">Filter Payment:</label>
+                      <select
+                        value={paymentFilter}
+                        onChange={(e) => setPaymentFilter(e.target.value)}
+                        className="bg-white border border-slate-200 rounded-lg p-1.5 text-xs text-slate-700 w-full focus:outline-none"
+                      >
+                        <option value="all">All Methods</option>
+                        <option value="cash">Cash Tendered</option>
+                        <option value="card">Credit/Debit Card</option>
+                        <option value="mobile_money">Mobile Transfer</option>
+                        <option value="credit">Store Credit</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
-              ) : (
-                <div className="divide-y divide-slate-100 flex-1 overflow-y-auto">
-                  {matchingReceipts.map((s) => {
-                    const isSelected = selectedSale?.id === s.id;
-                    return (
+
+                {/* Bulk Actions Banner when items are checked */}
+                {selectedSaleIds.length > 0 && (
+                  <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl shadow-xs space-y-2 animate-fadeIn">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center space-x-2">
+                        <Trash2 className="w-4 h-4 text-rose-600" />
+                        <span className="font-bold text-rose-900">
+                          {selectedSaleIds.length} receipt{selectedSaleIds.length > 1 ? 's' : ''} selected
+                        </span>
+                      </div>
+                      <span className="font-mono text-[11px] font-bold text-rose-800">
+                        Valued: {currency}{sales.filter(s => selectedSaleIds.includes(s.id)).reduce((acc, curr) => acc + curr.total, 0).toFixed(2)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between space-x-2 pt-1">
                       <button
-                        key={s.id}
-                        onClick={() => setSelectedSale(s)}
-                        className={`w-full text-left p-3.5 flex justify-between items-start transition-all ${
-                          isSelected 
-                            ? 'bg-blue-50/70 border-l-4 border-l-blue-600' 
-                            : 'hover:bg-slate-50/50 border-l-4 border-l-transparent'
-                        }`}
+                        onClick={() => setSelectedSaleIds([])}
+                        className="text-[10px] text-slate-600 hover:text-slate-900 underline font-medium cursor-pointer"
                         type="button"
                       >
-                        <div className="space-y-1 min-w-0 pr-2">
-                          <div className="flex items-center space-x-1.5">
-                            <span className="font-bold text-slate-900 font-mono text-[11px] block truncate">{s.id}</span>
-                            <span className="bg-slate-100 text-slate-600 text-[8px] font-bold px-1 py-0.2 rounded font-mono">
-                              {s.paymentMethod.replace(/_/g, ' ')}
-                            </span>
-                          </div>
-                          
-                          <div className="text-[10px] text-slate-500 space-y-0.5">
-                            <div className="truncate font-medium">Customer: {s.customerName}</div>
-                            <div className="text-slate-400 font-mono text-[9px]">
-                              {new Date(s.timestamp).toLocaleString()}
-                            </div>
-                            {s.cashierName && (
-                              <div className="text-slate-400 text-[9px] italic">
-                                Cashier: {s.cashierName}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="text-right shrink-0">
-                          <span className="font-bold text-slate-900 font-mono text-xs block">{currency}{s.total.toFixed(2)}</span>
-                          <span className="text-[9px] font-semibold text-slate-400 block">{s.items.length} unique items</span>
-                        </div>
+                        Deselect All
                       </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
+
+                      <button
+                        onClick={() => setShowBulkConfirmModal(true)}
+                        className="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow-xs flex items-center space-x-1.5 transition-all cursor-pointer"
+                        type="button"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Void & Delete Selected ({selectedSaleIds.length})</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* HIERARCHY DRILLDOWN VIEW (Month -> Week -> Day) */}
+                {vaultViewMode === 'hierarchy' ? (
+                  <div className="bg-white rounded-xl border border-slate-200/60 shadow-xs overflow-hidden flex-1 min-h-[420px] max-h-[580px] overflow-y-auto flex flex-col p-3 space-y-2">
+                    <div className="flex justify-between items-center text-[10px] text-slate-500 font-bold uppercase tracking-wider pb-2 border-b border-slate-100">
+                      <span>Hierarchical Date Audit ({groupedSalesTree.length} Months)</span>
+                      {selectedDayKey && (
+                        <button
+                          onClick={() => setSelectedDayKey(null)}
+                          className="text-blue-600 hover:underline cursor-pointer font-bold lowercase"
+                          type="button"
+                        >
+                          clear day filter
+                        </button>
+                      )}
+                    </div>
+
+                    {groupedSalesTree.length === 0 ? (
+                      <div className="p-8 text-center text-slate-400 space-y-2">
+                        <Calendar className="w-8 h-8 text-slate-300 mx-auto" />
+                        <p className="text-xs font-semibold text-slate-600">No receipt periods found</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5 overflow-y-auto pr-1">
+                        {groupedSalesTree.map(mGroup => {
+                          const isMonthExpanded = expandedMonths.includes(mGroup.monthKey);
+
+                          return (
+                            <div key={mGroup.monthKey} className="border border-slate-200/80 rounded-xl overflow-hidden shadow-xs bg-slate-50/40">
+                              
+                              {/* Month Header */}
+                              <div
+                                onClick={() => toggleMonthExpand(mGroup.monthKey)}
+                                className="p-3 bg-white hover:bg-slate-50 flex items-center justify-between cursor-pointer border-b border-slate-100 transition-all select-none"
+                              >
+                                <div className="flex items-center space-x-2 min-w-0">
+                                  {isMonthExpanded ? (
+                                    <ChevronDown className="w-4 h-4 text-blue-600 shrink-0" />
+                                  ) : (
+                                    <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+                                  )}
+                                  <span className="font-extrabold text-xs text-slate-900 font-mono">{mGroup.monthLabel}</span>
+                                  <span className="bg-blue-50 text-blue-700 text-[9px] font-bold px-1.5 py-0.2 rounded font-mono">
+                                    {mGroup.salesCount} sale{mGroup.salesCount > 1 ? 's' : ''}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center space-x-2 shrink-0">
+                                  <span className="font-mono text-xs font-bold text-slate-900">
+                                    {currency}{mGroup.totalRevenue.toFixed(2)}
+                                  </span>
+
+                                  {/* Bulk Void Month Button */}
+                                  <button
+                                    onClick={(e) => handleTriggerPeriodBulkVoid(mGroup.saleIds, e)}
+                                    className="p-1 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-lg text-[10px] font-bold flex items-center space-x-1 border border-rose-200 transition-all cursor-pointer"
+                                    title={`Bulk void all ${mGroup.salesCount} receipts for ${mGroup.monthLabel}`}
+                                    type="button"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                    <span className="hidden sm:inline">Void Month</span>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Month Weeks Content */}
+                              {isMonthExpanded && (
+                                <div className="p-2 space-y-2 bg-slate-50/60">
+                                  {mGroup.weeks.map(wGroup => {
+                                    const isWeekExpanded = expandedWeeks.includes(wGroup.weekKey);
+
+                                    return (
+                                      <div key={wGroup.weekKey} className="border border-slate-200/60 rounded-lg bg-white overflow-hidden shadow-2xs">
+                                        
+                                        {/* Week Header */}
+                                        <div
+                                          onClick={() => toggleWeekExpand(wGroup.weekKey)}
+                                          className="p-2.5 bg-slate-50/80 hover:bg-slate-100/80 flex items-center justify-between cursor-pointer select-none transition-all"
+                                        >
+                                          <div className="flex items-center space-x-2 min-w-0">
+                                            {isWeekExpanded ? (
+                                              <ChevronDown className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                                            ) : (
+                                              <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                            )}
+                                            <span className="font-bold text-[11px] text-slate-800 font-mono truncate">{wGroup.weekLabel}</span>
+                                            <span className="text-[8px] bg-slate-200 text-slate-700 px-1 py-0.2 rounded font-mono font-bold">
+                                              {wGroup.salesCount}
+                                            </span>
+                                          </div>
+
+                                          <div className="flex items-center space-x-2 shrink-0">
+                                            <span className="font-mono text-[11px] font-bold text-slate-800">
+                                              {currency}{wGroup.totalRevenue.toFixed(2)}
+                                            </span>
+
+                                            {/* Bulk Void Week Button */}
+                                            <button
+                                              onClick={(e) => handleTriggerPeriodBulkVoid(wGroup.saleIds, e)}
+                                              className="p-1 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded text-[9px] font-bold flex items-center space-x-1 border border-rose-200 cursor-pointer"
+                                              title={`Bulk void all ${wGroup.salesCount} receipts for ${wGroup.weekLabel}`}
+                                              type="button"
+                                            >
+                                              <Trash2 className="w-2.5 h-2.5" />
+                                              <span>Void Week</span>
+                                            </button>
+                                          </div>
+                                        </div>
+
+                                        {/* Week Days Content */}
+                                        {isWeekExpanded && (
+                                          <div className="p-2 divide-y divide-slate-100 bg-white">
+                                            {wGroup.days.map(dGroup => {
+                                              const isDayActive = selectedDayKey === dGroup.dayKey;
+
+                                              return (
+                                                <div key={dGroup.dayKey} className="py-2 first:pt-0 last:pb-0 space-y-1.5">
+                                                  
+                                                  {/* Day Row */}
+                                                  <div className="flex items-center justify-between text-xs">
+                                                    <button
+                                                      onClick={() => setSelectedDayKey(isDayActive ? null : dGroup.dayKey)}
+                                                      className={`font-bold font-mono text-[11px] flex items-center space-x-1.5 cursor-pointer hover:underline ${
+                                                        isDayActive ? 'text-blue-700 underline' : 'text-slate-800'
+                                                      }`}
+                                                      type="button"
+                                                    >
+                                                      <Calendar className="w-3 h-3 text-blue-600 shrink-0" />
+                                                      <span>{dGroup.dayLabel}</span>
+                                                      <span className="text-[9px] bg-slate-100 text-slate-600 px-1 rounded font-normal">
+                                                        {dGroup.salesCount} receipts
+                                                      </span>
+                                                    </button>
+
+                                                    <div className="flex items-center space-x-2">
+                                                      <span className="font-mono text-[11px] font-extrabold text-slate-900">
+                                                        {currency}{dGroup.totalRevenue.toFixed(2)}
+                                                      </span>
+
+                                                      {/* Bulk Void Day Button */}
+                                                      <button
+                                                        onClick={(e) => handleTriggerPeriodBulkVoid(dGroup.saleIds, e)}
+                                                        className="px-1.5 py-0.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded text-[9px] font-bold flex items-center space-x-1 border border-rose-200 cursor-pointer"
+                                                        title={`Bulk void all ${dGroup.salesCount} receipts for ${dGroup.dayLabel}`}
+                                                        type="button"
+                                                      >
+                                                        <Trash2 className="w-2.5 h-2.5" />
+                                                        <span>Void Day</span>
+                                                      </button>
+                                                    </div>
+                                                  </div>
+
+                                                  {/* Display individual sales on this day if day is active */}
+                                                  {isDayActive && (
+                                                    <div className="pl-3 border-l-2 border-l-blue-500 space-y-1.5 my-1.5 animate-fadeIn">
+                                                      {dGroup.sales.map(s => {
+                                                        const isSelected = selectedSale?.id === s.id;
+                                                        const isChecked = selectedSaleIds.includes(s.id);
+
+                                                        return (
+                                                          <div
+                                                            key={s.id}
+                                                            onClick={() => setSelectedSale(s)}
+                                                            className={`p-2 rounded-lg border flex items-center justify-between text-xs cursor-pointer transition-all ${
+                                                              isSelected ? 'bg-blue-50 border-blue-400 font-bold' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
+                                                            }`}
+                                                          >
+                                                            <div className="flex items-center space-x-2 min-w-0">
+                                                              <input
+                                                                type="checkbox"
+                                                                checked={isChecked}
+                                                                onChange={(e) => toggleSelectSaleId(s.id, e as any)}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                className="rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
+                                                              />
+                                                              <div className="min-w-0">
+                                                                <span className="font-mono font-bold text-[10px] block truncate">{s.id}</span>
+                                                                <span className="text-[9px] text-slate-500 block truncate">
+                                                                  {new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {s.cashierName || 'Cashier'}
+                                                                </span>
+                                                              </div>
+                                                            </div>
+
+                                                            <span className="font-mono font-extrabold text-slate-900 text-[11px] shrink-0">
+                                                              {currency}{s.total.toFixed(2)}
+                                                            </span>
+                                                          </div>
+                                                        );
+                                                      })}
+                                                    </div>
+                                                  )}
+
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* FLAT LIST VIEW */
+                  <div className="bg-white rounded-xl border border-slate-200/60 shadow-xs overflow-hidden flex-1 min-h-[400px] max-h-[550px] overflow-y-auto flex flex-col">
+                    <div className="p-3 bg-slate-50 border-b border-slate-100 flex justify-between items-center text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          checked={matchingReceipts.length > 0 && matchingReceipts.every(s => selectedSaleIds.includes(s.id))}
+                          onChange={toggleSelectAllMatching}
+                          className="rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
+                          title="Select / Deselect all matching receipts for bulk audit deletion"
+                        />
+                        <span>Select All ({matchingReceipts.length})</span>
+                      </div>
+                      <span>Sorted: Newest</span>
+                    </div>
+
+                    {matchingReceipts.length === 0 ? (
+                      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400 space-y-2">
+                        <Receipt className="w-10 h-10 text-slate-300 stroke-1" />
+                        <p className="text-xs font-semibold text-slate-600">No matching receipts found</p>
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-100 flex-1 overflow-y-auto">
+                        {matchingReceipts.map((s) => {
+                          const isSelected = selectedSale?.id === s.id;
+                          const isChecked = selectedSaleIds.includes(s.id);
+                          return (
+                            <div
+                              key={s.id}
+                              onClick={() => setSelectedSale(s)}
+                              className={`w-full text-left p-3.5 flex items-start space-x-3 transition-all cursor-pointer ${
+                                isSelected 
+                                  ? 'bg-blue-50/70 border-l-4 border-l-blue-600' 
+                                  : isChecked
+                                  ? 'bg-rose-50/40 border-l-4 border-l-rose-400'
+                                  : 'hover:bg-slate-50/50 border-l-4 border-l-transparent'
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => toggleSelectSaleId(s.id, e as any)}
+                                onClick={(e) => e.stopPropagation()}
+                                className="mt-1 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer shrink-0"
+                              />
+
+                              <div className="flex-1 flex justify-between items-start min-w-0">
+                                <div className="space-y-1 min-w-0 pr-2">
+                                  <div className="flex items-center space-x-1.5">
+                                    <span className="font-bold text-slate-900 font-mono text-[11px] block truncate">{s.id}</span>
+                                    <span className="bg-slate-100 text-slate-600 text-[8px] font-bold px-1 py-0.2 rounded font-mono">
+                                      {s.paymentMethod.replace(/_/g, ' ')}
+                                    </span>
+                                  </div>
+                                  
+                                  <div className="text-[10px] text-slate-500 space-y-0.5">
+                                    <div className="truncate font-medium">Customer: {s.customerName}</div>
+                                    <div className="text-slate-400 font-mono text-[9px]">
+                                      {new Date(s.timestamp).toLocaleString()}
+                                    </div>
+                                    {s.cashierName && (
+                                      <div className="text-slate-600 font-semibold text-[9px]">
+                                        Cashier: {s.cashierName}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="text-right shrink-0">
+                                  <span className="font-bold text-slate-900 font-mono text-xs block">{currency}{s.total.toFixed(2)}</span>
+                                  <span className="text-[9px] font-semibold text-slate-400 block">{s.items.length} unique items</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
           {/* Right Column: High-fidelity POS Receipt Viewer (cols 7) */}
           <div className="lg:col-span-7 flex flex-col space-y-4">
@@ -1129,7 +1747,393 @@ export default function AnalyticsPanel({ sales, products, currency, onUpdateSale
               </div>
             )}
           </div>
-          
+        </div>
+      )}
+          {/* VOIDED RECEIPTS TRASH & AUDIT BIN VIEW */}
+          {receiptVaultTab === 'void_bin' && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fadeIn">
+              
+              {/* Left Column: Voided List & Bulk Restoration (cols 5) */}
+              <div className="lg:col-span-5 flex flex-col space-y-4">
+                
+                {/* Header Banner */}
+                <div className="bg-rose-900 text-white p-4 rounded-xl shadow-md space-y-2">
+                  <div className="flex items-center space-x-2">
+                    <Undo className="w-5 h-5 text-rose-300" />
+                    <h3 className="font-bold text-sm">Voided Receipts Audit & Undo Vault</h3>
+                  </div>
+                  <p className="text-[11px] text-rose-200 leading-relaxed font-medium">
+                    Restorable transaction archive. Any mistakenly deleted cashier logs can be restored back to active sales with 1-click inventory consistency adjustments.
+                  </p>
+                </div>
+
+                {/* Bulk Actions Banner when voided items are checked */}
+                {selectedVoidIds.length > 0 && (
+                  <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl shadow-xs space-y-2 animate-fadeIn">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center space-x-2">
+                        <RotateCcw className="w-4 h-4 text-emerald-600" />
+                        <span className="font-bold text-emerald-900">
+                          {selectedVoidIds.length} voided receipt{selectedVoidIds.length > 1 ? 's' : ''} selected
+                        </span>
+                      </div>
+                      <span className="font-mono text-[11px] font-bold text-emerald-800">
+                        Valued: {currency}{voidedSales.filter(v => selectedVoidIds.includes(v.id)).reduce((acc, curr) => acc + curr.sale.total, 0).toFixed(2)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between space-x-2 pt-1">
+                      <button
+                        onClick={() => setSelectedVoidIds([])}
+                        className="text-[10px] text-slate-600 hover:text-slate-900 underline font-medium cursor-pointer"
+                        type="button"
+                      >
+                        Deselect All
+                      </button>
+
+                      <button
+                        onClick={() => setShowBulkRestoreConfirmModal(true)}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow-xs flex items-center space-x-1.5 transition-all cursor-pointer"
+                        type="button"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Undo Void & Restore Selected ({selectedVoidIds.length})</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Voided Receipts List */}
+                <div className="bg-white rounded-xl border border-slate-200/60 shadow-xs overflow-hidden flex-1 min-h-[400px] max-h-[550px] overflow-y-auto flex flex-col">
+                  <div className="p-3 bg-slate-50 border-b border-slate-100 flex justify-between items-center text-[10px] text-slate-500 font-bold uppercase tracking-wider">
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        checked={voidedSales.length > 0 && voidedSales.every(v => selectedVoidIds.includes(v.id))}
+                        onChange={toggleSelectAllVoided}
+                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                        title="Select all voided receipts for bulk restoration"
+                      />
+                      <span>Select All Voided ({voidedSales.length})</span>
+                    </div>
+                    <span>Void History Log</span>
+                  </div>
+
+                  {voidedSales.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400 space-y-2">
+                      <Archive className="w-10 h-10 text-slate-300 stroke-1" />
+                      <p className="text-xs font-semibold text-slate-600">No voided receipts in vault</p>
+                      <p className="text-[10px] max-w-xs text-slate-400">
+                        When cashier entries are deleted or bulk voided from active logs, they will appear here and remain 100% restorable.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-100 flex-1 overflow-y-auto">
+                      {voidedSales.map((vRecord) => {
+                        const isSelected = selectedVoidRecord?.id === vRecord.id;
+                        const isChecked = selectedVoidIds.includes(vRecord.id);
+
+                        return (
+                          <div
+                            key={vRecord.id}
+                            onClick={() => setSelectedVoidRecord(vRecord)}
+                            className={`w-full text-left p-3.5 flex items-start space-x-3 transition-all cursor-pointer ${
+                              isSelected 
+                                ? 'bg-rose-50/80 border-l-4 border-l-rose-600' 
+                                : isChecked
+                                ? 'bg-emerald-50/40 border-l-4 border-l-emerald-400'
+                                : 'hover:bg-slate-50/50 border-l-4 border-l-transparent'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => toggleSelectVoidId(vRecord.id, e as any)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="mt-1 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer shrink-0"
+                            />
+
+                            <div className="flex-1 flex justify-between items-start min-w-0">
+                              <div className="space-y-1 min-w-0 pr-2">
+                                <div className="flex items-center space-x-1.5">
+                                  <span className="font-bold text-slate-900 font-mono text-[11px] block truncate">{vRecord.sale.id}</span>
+                                  <span className="bg-rose-100 text-rose-800 text-[8px] font-extrabold px-1.5 py-0.2 rounded font-mono uppercase">
+                                    VOIDED
+                                  </span>
+                                  {vRecord.restocked && (
+                                    <span className="bg-amber-100 text-amber-800 text-[8px] font-bold px-1.5 py-0.2 rounded font-mono">
+                                      RESTOCKED
+                                    </span>
+                                  )}
+                                </div>
+                                
+                                <div className="text-[10px] text-slate-500 space-y-0.5">
+                                  <div className="truncate font-medium">Customer: {vRecord.sale.customerName}</div>
+                                  <div className="text-slate-400 font-mono text-[9px]">
+                                    Voided: {new Date(vRecord.voidTimestamp).toLocaleString()} by {vRecord.voidedBy || 'Operator'}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="text-right shrink-0 space-y-1">
+                                <span className="font-bold text-slate-900 font-mono text-xs block">{currency}{vRecord.sale.total.toFixed(2)}</span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (onRestoreSale) onRestoreSale(vRecord.id);
+                                  }}
+                                  className="bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded text-[9px] font-bold flex items-center space-x-1 transition-all cursor-pointer"
+                                  title="Restore sale back to active ledger"
+                                  type="button"
+                                >
+                                  <RotateCcw className="w-2.5 h-2.5" />
+                                  <span>Restore</span>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: Voided Receipt Inspector & Restore Panel (cols 7) */}
+              <div className="lg:col-span-7 flex flex-col space-y-4">
+                {selectedVoidRecord ? (
+                  <div className="bg-white rounded-xl border border-slate-200/60 shadow-xs p-5 flex flex-col space-y-4">
+                    
+                    {/* Header Banner for Voided Inspector */}
+                    <div className="bg-rose-50 border border-rose-200 p-3.5 rounded-xl flex items-center justify-between">
+                      <div className="flex items-center space-x-2 text-rose-900">
+                        <Trash2 className="w-5 h-5 text-rose-600" />
+                        <div>
+                          <h4 className="font-bold text-xs">Voided Transaction Log #{selectedVoidRecord.sale.id}</h4>
+                          <p className="text-[10px] text-rose-700">
+                            Voided on {new Date(selectedVoidRecord.voidTimestamp).toLocaleString()} • Restock strategy: {selectedVoidRecord.restocked ? 'Items returned to shelf' : 'Inventory unchanged'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => {
+                          if (onRestoreSale) onRestoreSale(selectedVoidRecord.id);
+                          setSelectedVoidRecord(null);
+                        }}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg shadow-xs flex items-center space-x-1.5 transition-all cursor-pointer"
+                        type="button"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>Undo Void & Restore</span>
+                      </button>
+                    </div>
+
+                    {/* Receipt Body */}
+                    <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 font-mono text-xs max-w-sm mx-auto w-full relative">
+                      <div className="text-center space-y-1 mb-3 pb-3 border-b border-dashed border-slate-300">
+                        <span className="text-rose-600 font-black text-sm uppercase tracking-widest block">[ VOIDED RECEIPT ]</span>
+                        <h4 className="font-bold text-slate-800">MyShop POS Record</h4>
+                        <p className="text-[10px] text-slate-500">ID: {selectedVoidRecord.sale.id}</p>
+                        <p className="text-[10px] text-slate-400">Date: {new Date(selectedVoidRecord.sale.timestamp).toLocaleString()}</p>
+                      </div>
+
+                      <div className="space-y-1.5 mb-3 text-[11px]">
+                        <div className="flex justify-between font-bold text-slate-700 border-b border-slate-200 pb-1">
+                          <span>ITEM</span>
+                          <span>QTY x PRICE</span>
+                        </div>
+                        {selectedVoidRecord.sale.items.map((it, idx) => (
+                          <div key={idx} className="flex justify-between text-slate-600 text-[10px]">
+                            <span>{it.productName}</span>
+                            <span>{it.quantity} x {currency}{it.price.toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="border-t border-dashed border-slate-300 pt-2 space-y-1 font-bold text-slate-800">
+                        <div className="flex justify-between text-xs text-rose-700">
+                          <span>TOTAL VOIDED VALUE</span>
+                          <span>{currency}{selectedVoidRecord.sale.total.toFixed(2)}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-normal">
+                          Customer: {selectedVoidRecord.sale.customerName} ({selectedVoidRecord.sale.customerPhone})
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-normal">
+                          Cashier: {selectedVoidRecord.sale.cashierName || 'Cashier'}
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-xl border border-slate-200/60 shadow-xs p-16 text-center text-slate-400 flex flex-col items-center justify-center space-y-3">
+                    <Undo className="w-12 h-12 text-slate-300 stroke-1" />
+                    <h4 className="font-bold text-slate-700">No Voided Record Selected</h4>
+                    <p className="text-xs max-w-sm text-slate-400 leading-normal">
+                      Click on any voided transaction log on the left to review its details and trigger 1-click restoration back into active store ledgers.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          )}
+
+        </div>
+      )}
+      {showBulkRestoreConfirmModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-slate-800">
+            <div className="flex items-center space-x-3 text-emerald-600 border-b border-slate-100 pb-3">
+              <div className="p-2.5 bg-emerald-50 rounded-xl">
+                <RotateCcw className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Undo Void & Restore Receipts</h3>
+                <p className="text-[11px] text-slate-500 font-medium">Re-instate Transaction Ledger Consistency</p>
+              </div>
+            </div>
+
+            <div className="text-xs space-y-3">
+              <p className="leading-relaxed font-medium">
+                You are about to restore <strong className="text-emerald-600">{selectedVoidIds.length} voided receipt(s)</strong> back into active sales records.
+              </p>
+
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1.5 font-mono text-[11px]">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Selected Voided Records:</span>
+                  <span className="font-bold text-slate-900">{selectedVoidIds.length} items</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Combined Value:</span>
+                  <span className="font-bold text-emerald-600">
+                    {currency}{voidedSales.filter(v => selectedVoidIds.includes(v.id)).reduce((acc, curr) => acc + curr.sale.total, 0).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 p-3 rounded-xl text-blue-900 text-[11px] space-y-1">
+                <span className="font-bold block">Inventory Balance Note:</span>
+                <p>
+                  If any of these voided receipts were restocked upon deletion, restoring them will automatically deduct the item quantities back from shelf inventory.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => setShowBulkRestoreConfirmModal(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmBulkRestore}
+                className="px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md transition-all flex items-center space-x-1.5 cursor-pointer"
+                type="button"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Confirm Restore ({selectedVoidIds.length})</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showBulkConfirmModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4 text-slate-800">
+            <div className="flex items-center space-x-3 text-rose-600 border-b border-slate-100 pb-3">
+              <div className="p-2.5 bg-rose-50 rounded-xl">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Confirm Bulk Cashier Log Deletion</h3>
+                <p className="text-[11px] text-slate-500 font-medium">Audit & Tax Filing Pre-Correction Tool</p>
+              </div>
+            </div>
+
+            <div className="text-xs space-y-3">
+              <p className="leading-relaxed font-medium">
+                You are about to permanently void and delete <strong className="text-rose-600">{selectedSaleIds.length} cashier receipt entry errors</strong> from your store's sales database.
+              </p>
+
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1.5 font-mono text-[11px]">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Selected Receipts:</span>
+                  <span className="font-bold text-slate-900">{selectedSaleIds.length} items</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Total Revenue Value:</span>
+                  <span className="font-bold text-rose-600">
+                    {currency}{sales.filter(s => selectedSaleIds.includes(s.id)).reduce((acc, curr) => acc + curr.total, 0).toFixed(2)}
+                  </span>
+                </div>
+                {cashierFilter !== 'all' && (
+                  <div className="flex justify-between text-blue-700">
+                    <span className="text-slate-500">Filtered Cashier:</span>
+                    <span className="font-bold">{cashierFilter}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Restock Choice */}
+              <div className="bg-amber-50/60 border border-amber-200 p-3 rounded-xl space-y-2">
+                <span className="font-bold text-[11px] text-amber-900 block uppercase tracking-wider">Inventory Adjustment Strategy:</span>
+                
+                <label className="flex items-start space-x-2.5 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="bulkRestockChoice"
+                    checked={bulkRestock === true}
+                    onChange={() => setBulkRestock(true)}
+                    className="mt-0.5 text-rose-600 focus:ring-rose-500"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-800 block text-xs">Void & Restock Items to Shelf</span>
+                    <span className="text-[10px] text-slate-500 leading-tight block">
+                      Recommended for mistakenly entered sales. Automatically returns item quantities to active retail stock levels.
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-start space-x-2.5 cursor-pointer pt-1 border-t border-amber-200/50">
+                  <input
+                    type="radio"
+                    name="bulkRestockChoice"
+                    checked={bulkRestock === false}
+                    onChange={() => setBulkRestock(false)}
+                    className="mt-0.5 text-rose-600 focus:ring-rose-500"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-800 block text-xs">Void Without Restocking Inventory</span>
+                    <span className="text-[10px] text-slate-500 leading-tight block">
+                      Use if cashiers entered duplicate logs or test transactions for physical items that were never taken off shelves.
+                    </span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+              <button
+                onClick={() => setShowBulkConfirmModal(false)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmBulkDelete}
+                className="px-4 py-2 text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-md transition-all flex items-center space-x-1.5 cursor-pointer"
+                type="button"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Confirm Bulk Delete ({selectedSaleIds.length})</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -61,10 +61,15 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
   // Search input element reference for F3 keyboard focusing
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Web Audio synth for instant scanner feedback (Windows 10+ native compatible)
+  // Web Audio synth for instant scanner feedback (Windows 7/8/10/11 native compatible)
   const playBeep = (isSuccess = true) => {
     try {
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtxClass) return;
+      const audioCtx = new AudioCtxClass();
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
       const oscillator = audioCtx.createOscillator();
       const gainNode = audioCtx.createGain();
       
@@ -88,7 +93,7 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
     }
   };
 
-  // Global key listener for physical hardware scanners & Windows 10+ POS Keyboard Shortcuts
+  // Global key listener for physical hardware scanners & Windows 7+ POS Keyboard Shortcuts
   useEffect(() => {
     let rawKeysBuffer: string[] = [];
     let keyTimes: number[] = [];
@@ -101,6 +106,22 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
         activeEl.tagName === 'TEXTAREA' || 
         activeEl.getAttribute('contenteditable') === 'true'
       );
+
+      // Windows Global Shortcut: Ctrl + P (Intercept browser print with thermal receipt spooler print)
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        if (completedSale || showPrintPreview) {
+          window.print();
+        } else if (cart.length > 0) {
+          setCheckedItems(true);
+          setCheckedCustomer(true);
+          setCheckedPayment(true);
+          setShowPrintPreview(true);
+        } else {
+          playBeep(false);
+        }
+        return;
+      }
 
       // 1. Windows POS Functional Keys Mapping (F1 - F9, Esc)
       if (e.key === 'F1') {
@@ -168,8 +189,7 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
         return;
       }
 
-      // 2. Hardware Wedge Scanner Capture Engine (2000-2026 Wedge Compatibility)
-      // Standard wedge scanners send data at extremely high speeds (<45ms intervals)
+      // 2. Hardware Wedge Scanner Capture Engine (2000-2026 Wedge Compatibility Windows 7+)
       if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
         return;
       }
@@ -184,7 +204,9 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
         keyTimes = [];
       }
 
-      if (e.key === 'Enter' || e.key === 'Tab') {
+      const isEnterOrTab = e.key === 'Enter' || e.key === 'Tab' || e.key === 'Accept' || e.keyCode === 13 || e.keyCode === 9;
+
+      if (isEnterOrTab) {
         if (rawKeysBuffer.length >= 3) {
           // Calculate average typing speed of keystrokes
           let totalDiff = 0;
@@ -1891,10 +1913,10 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
                   <span>1. Hardware Wedge Barcode Scanners (USB/PS2)</span>
                 </h3>
                 <p className="text-[11px] text-slate-400">
-                  This POS system includes an industrial-grade input-timing filter compatible with all keyboard-wedge laser scanners (dating from <strong>2000 till 2026</strong>) including Honeywell, Zebra, Symbol, Datalogic, and Eyoyo.
+                  This POS system includes an industrial-grade input-timing filter fully compatible with your <strong className="text-blue-400">ZKTECO ZKB209</strong> desktop scanner, as well as all other keyboard-wedge laser hardware (including Honeywell, Zebra, Symbol, Datalogic, and Eyoyo).
                 </p>
                 <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-400 font-mono">
-                  <li><strong>Plug & Play:</strong> No specific windows drivers or companion software is required.</li>
+                  <li><strong>Plug & Play (ZKB209):</strong> Connect the USB cable directly. No custom Windows drivers are required.</li>
                   <li><strong>Automatic Capture:</strong> Keystrokes received within 65ms are caught globally by the wedge engine, matching the scanned product instantly, regardless of what field is currently active.</li>
                 </ul>
               </div>
@@ -1903,18 +1925,18 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
               <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
                 <h3 className="text-emerald-400 font-bold flex items-center space-x-1">
                   <span>🖨️</span>
-                  <span>2. Thermal Receipt Printer Setup (58mm / 80mm)</span>
+                  <span>2. Thermal Receipt Printer Setup (80mm Roll)</span>
                 </h3>
                 <p className="text-[11px] text-slate-400">
-                  Our custom multi-format layout maps CSS grids cleanly to standard paper rolls. Epson TM series, Star Micronics, and XPrinter hardware are supported natively.
+                  Our custom multi-format layout maps CSS grids cleanly to standard paper rolls, optimized specifically for your <strong className="text-emerald-400">SNBC BTP-S81 (80mm)</strong> thermal printer as well as Epson TM, Star Micronics, and XPrinter hardware.
                 </p>
                 <div className="space-y-1 bg-slate-900 p-2.5 rounded border border-slate-850/50 text-[11px] font-mono text-slate-400">
-                  <p className="text-white font-bold">Windows 10+ Driver Settings:</p>
+                  <p className="text-white font-bold">SNBC BTP-S81 Print Settings:</p>
                   <p>1. Toggle print preview (F9) and click "Print Physical Receipt"</p>
                   <p>2. In the Windows Print Dialog, expand <strong>"More Settings"</strong></p>
                   <p>3. Select Margins: <strong className="text-emerald-400">None</strong> or <strong className="text-emerald-400">Minimum</strong></p>
-                  <p>4. Check/Enable: <strong className="text-emerald-400">"Background Graphics"</strong> (this loads custom receipt styles)</p>
-                  <p>5. Uncheck/Disable: <strong>"Headers and Footers"</strong> (removes unwanted URL & Date stamps)</p>
+                  <p>4. Check/Enable: <strong className="text-emerald-400">"Background Graphics"</strong> (loads receipts cleanly)</p>
+                  <p>5. Uncheck/Disable: <strong>"Headers and Footers"</strong> (removes unwanted URL &amp; Date stamps)</p>
                 </div>
               </div>
 

@@ -35,6 +35,9 @@ export default function InventoryManager({
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [showLowStockOnly, setShowLowStockOnly] = useState(false);
 
+  // Hardware Scanner notifications
+  const [scanNotification, setScanNotification] = useState<{message: string, type: 'success' | 'new' | 'error'} | null>(null);
+
   // Physical count audit states
   const [physicalWholesale, setPhysicalWholesale] = useState<Record<string, number>>({});
   const [physicalRetail, setPhysicalRetail] = useState<Record<string, number>>({});
@@ -105,6 +108,217 @@ export default function InventoryManager({
   const [damageLocation, setDamageLocation] = useState<'wholesale' | 'retail'>('retail');
   const [damageReason, setDamageReason] = useState('Broken / Leaked / Damaged');
   const [damageNotes, setDamageNotes] = useState('');
+
+  // Web Audio synth for instant scanner feedback (Windows 10+ native compatible)
+  const playBeep = (isSuccess = true, isNew = false) => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      oscillator.type = 'sine';
+      
+      if (isNew) {
+        // Double sweet chirp for new products
+        oscillator.frequency.setValueAtTime(800, audioCtx.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(1500, audioCtx.currentTime + 0.15);
+        gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.15);
+      } else if (isSuccess) {
+        oscillator.frequency.setValueAtTime(1000, audioCtx.currentTime); // Mid pitch retail chirp
+        gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.08); // 80ms duration
+      } else {
+        oscillator.frequency.setValueAtTime(220, audioCtx.currentTime); // Low warning buzz
+        gainNode.gain.setValueAtTime(0.12, audioCtx.currentTime);
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.25); // 250ms duration
+      }
+    } catch (e) {
+      console.warn("Could not synth scan beep:", e);
+    }
+  };
+
+  // Hardware wedge barcode scanner global listener inside Inventory Manager view
+  useEffect(() => {
+    let rawKeysBuffer: string[] = [];
+    let keyTimes: number[] = [];
+
+    const handleGlobalInventoryKeys = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement as HTMLElement | null;
+      const isInputFocused = activeEl && (
+        activeEl.tagName === 'INPUT' || 
+        activeEl.tagName === 'TEXTAREA' || 
+        activeEl.getAttribute('contenteditable') === 'true'
+      );
+
+      // We only intercept alphanumeric wedge inputs for barcode scanning
+      if (e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta') {
+        return;
+      }
+
+      const currentTime = Date.now();
+      const lastKeyTime = keyTimes.length > 0 ? keyTimes[keyTimes.length - 1] : currentTime;
+      const diff = currentTime - lastKeyTime;
+
+      // Reset keyboard scanner buffer if typing speed is human-like (> 65ms between keys)
+      if (keyTimes.length > 0 && diff > 65) {
+        rawKeysBuffer = [];
+        keyTimes = [];
+      }
+
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        if (rawKeysBuffer.length >= 3) {
+          // Calculate average typing speed of keystrokes
+          let totalDiff = 0;
+          for (let i = 1; i < keyTimes.length; i++) {
+            totalDiff += (keyTimes[i] - keyTimes[i - 1]);
+          }
+          const avgDelay = keyTimes.length > 1 ? totalDiff / (keyTimes.length - 1) : 0;
+
+          // If typed under 50ms average or block size indicates scanner
+          if (avgDelay < 50 || keyTimes.length > 4) {
+            const scannedCode = rawKeysBuffer.join('').trim();
+            
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Strip the scanned sequence from active focused inputs to prevent polluting values
+            if (isInputFocused) {
+              const inputEl = activeEl as HTMLInputElement | HTMLTextAreaElement;
+              const val = inputEl.value;
+              if (val.endsWith(scannedCode)) {
+                inputEl.value = val.substring(0, val.length - scannedCode.length);
+              } else if (val.includes(scannedCode)) {
+                inputEl.value = val.replace(scannedCode, '');
+              }
+              // Force React state update
+              const changeEvent = new Event('input', { bubbles: true });
+              inputEl.dispatchEvent(changeEvent);
+            }
+
+            handleBarcodeScannedInInventory(scannedCode);
+            rawKeysBuffer = [];
+            keyTimes = [];
+            return;
+          }
+        }
+        rawKeysBuffer = [];
+        keyTimes = [];
+      } else if (e.key.length === 1 && /[0-9a-zA-Z\-_]/.test(e.key)) {
+        rawKeysBuffer.push(e.key);
+        keyTimes.push(currentTime);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalInventoryKeys, true); // Intercept in capture phase
+    return () => {
+      window.removeEventListener('keydown', handleGlobalInventoryKeys, true);
+    };
+  }, [products, activeTab, physicalWholesale, physicalRetail, auditNotes, showAddForm]);
+
+  const handleBarcodeScannedInInventory = (scannedCode: string) => {
+    const foundProduct = products.find(p => p.barcode === scannedCode);
+
+    if (foundProduct) {
+      // 1. PRODUCT EXISTS IN CATALOG
+      playBeep(true, false);
+
+      if (activeTab === 'catalog') {
+        if (showAddForm) {
+          // If they open the form but scan an existing product, warn or update form
+          setBarcode(scannedCode);
+          setScanNotification({
+            message: `Scanned code matched existing product: "${foundProduct.name}"!`,
+            type: 'success'
+          });
+        } else {
+          // Filter search bar immediately to show this product
+          setSearchQuery(scannedCode);
+          setScanNotification({
+            message: `Located catalog item: "${foundProduct.name}"! Showing details.`,
+            type: 'success'
+          });
+        }
+      } else if (activeTab === 'transfer') {
+        // Pre-fill restock/buy/damage inputs with the found product
+        setTransferProductId(foundProduct.id);
+        setPurchaseProductId(foundProduct.id);
+        setDamageProductId(foundProduct.id);
+        setScanNotification({
+          message: `Linked "${foundProduct.name}" to operations. Enter quantity below!`,
+          type: 'success'
+        });
+        
+        // Focus the transfer qty input or purchase qty input depending on what is visible
+        setTimeout(() => {
+          const qtyInput = document.getElementById('transfer-qty-input') || document.getElementById('purchase-qty-input');
+          if (qtyInput) {
+            qtyInput.focus();
+            (qtyInput as HTMLInputElement).select();
+          }
+        }, 120);
+      } else if (activeTab === 'audit') {
+        // Auto-increment physical count on Shelf (Retail) by 1 for ultra fast inventorying!
+        const currentCount = physicalRetail[foundProduct.id] !== undefined 
+          ? physicalRetail[foundProduct.id] 
+          : foundProduct.retailStock;
+        
+        setPhysicalRetail(prev => ({
+          ...prev,
+          [foundProduct.id]: currentCount + 1
+        }));
+        
+        setScanNotification({
+          message: `Audit scan: "${foundProduct.name}" Shelf count +1 (Count: ${currentCount + 1})`,
+          type: 'success'
+        });
+      } else if (activeTab === 'logs') {
+        setSearchQuery(scannedCode);
+        setScanNotification({
+          message: `Showing Stock Adjust Logs for "${foundProduct.name}"`,
+          type: 'success'
+        });
+      }
+    } else {
+      // 2. NEW BARCODE - REGISTER PRODUCT DIRECTLY
+      playBeep(true, true); // Play special "new item register" chirp
+      
+      setActiveTab('catalog');
+      setShowAddForm(true);
+      setShowCategoryManager(false);
+      setShowSyncSuite(false);
+      setBarcode(scannedCode);
+      setName('');
+      
+      setScanNotification({
+        message: `New Barcode Scanned: [${scannedCode}]. Add Product form opened!`,
+        type: 'new'
+      });
+
+      // Smoothly focus the Name field so the operator can immediately type the product name
+      setTimeout(() => {
+        const nameInput = document.getElementById('new-product-name');
+        if (nameInput) {
+          nameInput.focus();
+        }
+      }, 150);
+    }
+  };
+
+  // Clear notifications automatically after 4 seconds
+  useEffect(() => {
+    if (scanNotification) {
+      const timer = setTimeout(() => {
+        setScanNotification(null);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [scanNotification]);
 
   // Extract unique categories, blending configured settings categories with any product categories
   const configuredCategories = settings.categories && settings.categories.length > 0
@@ -323,6 +537,34 @@ export default function InventoryManager({
 
   return (
     <div className="space-y-6" id="inventory-manager-view">
+      {/* Scan Feedback Banner */}
+      {scanNotification && (
+        <div 
+          className={`px-4 py-3 rounded-xl border flex items-center justify-between shadow-lg animate-fadeIn transition-all ${
+            scanNotification.type === 'new' 
+              ? 'bg-blue-600 border-blue-500 text-white animate-pulse' 
+              : 'bg-emerald-600 border-emerald-500 text-white'
+          }`}
+          id="inventory-scan-feedback-toast"
+        >
+          <div className="flex items-center space-x-2.5 text-xs text-left">
+            <span className="text-sm">{scanNotification.type === 'new' ? '✨' : '⚡'}</span>
+            <div>
+              <span className="font-extrabold uppercase tracking-widest text-[9px] block opacity-90 font-mono">
+                {scanNotification.type === 'new' ? 'New Barcode Scanned' : 'Barcode Scanner Intercepted'}
+              </span>
+              <p className="font-semibold leading-normal">{scanNotification.message}</p>
+            </div>
+          </div>
+          <button 
+            type="button"
+            onClick={() => setScanNotification(null)}
+            className="text-[10px] uppercase font-bold opacity-80 hover:opacity-100 cursor-pointer p-1 font-sans text-white"
+          >
+            ✕ Dismiss
+          </button>
+        </div>
+      )}
       {/* View Header with Sub-tabs */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-100 pb-4">
         <div className="flex items-center space-x-3">

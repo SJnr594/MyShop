@@ -393,7 +393,7 @@ export default function App() {
     setStockLogs(prev => [...prev, log]);
   };
 
-  // SALES CHECKOUT (RETAIL STOCK DEDUCTION)
+  // SALES CHECKOUT (RETAIL & WHOLESALE AUTOMATIC COMBINED STOCK DEDUCTION)
   const handleCheckout = (saleData: Omit<Sale, 'id' | 'timestamp'>): Sale => {
     const saleId = `RCP-${new Date().toISOString().slice(2, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
     const timestamp = Date.now();
@@ -404,16 +404,50 @@ export default function App() {
       timestamp
     };
 
-    // Deduct stock levels for sold items
+    const autoTransferLogs: StockLog[] = [];
+
+    // Deduct stock levels for sold items with automatic wholesale-to-retail conversion if needed
     setProducts(prev => prev.map(p => {
       const soldItem = saleData.items.find(item => item.productId === p.id);
-      if (soldItem) {
+      if (!soldItem) return p;
+
+      const unitsNeeded = soldItem.quantity;
+      const unitsPerCarton = p.unitsPerCarton || 24;
+
+      if (p.retailStock >= unitsNeeded) {
+        // Shelf stock is sufficient
         return {
           ...p,
-          retailStock: Math.max(0, p.retailStock - soldItem.quantity)
+          retailStock: p.retailStock - unitsNeeded
+        };
+      } else {
+        // Shelf stock insufficient - auto open wholesale cartons if available
+        const shortage = unitsNeeded - p.retailStock;
+        const cartonsToOpen = Math.min(p.wholesaleStock, Math.ceil(shortage / unitsPerCarton));
+        const convertedUnits = cartonsToOpen * unitsPerCarton;
+
+        if (cartonsToOpen > 0) {
+          autoTransferLogs.push({
+            id: `log_auto_transfer_${saleId}_${p.id}`,
+            productId: p.id,
+            productName: p.name,
+            timestamp,
+            type: 'wholesale_to_retail',
+            quantity: convertedUnits,
+            notes: `Auto-opened ${cartonsToOpen} bulk carton(s) (${convertedUnits} ${p.unit || 'pcs'}) from warehouse to fulfill checkout receipt ${saleId}`
+          });
+        }
+
+        const newWholesale = p.wholesaleStock - cartonsToOpen;
+        const availableShelf = p.retailStock + convertedUnits;
+        const newRetail = Math.max(0, availableShelf - unitsNeeded);
+
+        return {
+          ...p,
+          wholesaleStock: newWholesale,
+          retailStock: newRetail
         };
       }
-      return p;
     }));
 
     // Add sales record
@@ -438,17 +472,19 @@ export default function App() {
     }
 
     // Create stock deduction logs
-    const newLogs: StockLog[] = saleData.items.map(item => ({
+    const salesLogs: StockLog[] = saleData.items.map(item => ({
       id: `log_sale_${saleId}_${item.productId}`,
       productId: item.productId,
       productName: item.productName,
       timestamp,
       type: 'sales_deduction',
       quantity: item.quantity,
-      notes: `Deducted shelf stock for customer sale receipt: ${saleId}`
+      notes: item.packLabel 
+        ? `Deducted stock for ${item.packLabel} sale receipt: ${saleId}`
+        : `Deducted shelf stock for customer sale receipt: ${saleId}`
     }));
 
-    setStockLogs(prev => [...prev, ...newLogs]);
+    setStockLogs(prev => [...prev, ...autoTransferLogs, ...salesLogs]);
 
     return finalizedSale;
   };
@@ -836,7 +872,12 @@ export default function App() {
   const activeAlertsCount = products.filter(p => p.retailStock <= p.minStockAlert).length;
   
   // Count outstanding store credits requiring attention
-  const activeUnpaidCreditsCount = credits.filter(r => r.status !== 'paid').length;
+  const activeUnpaidCreditsCount = credits.filter(r => {
+    const roundedTotal = Math.round((r.totalAmount || 0) * 100) / 100;
+    const roundedPaid = Math.round((r.amountPaid || 0) * 100) / 100;
+    const isPaid = r.status === 'paid' || (roundedTotal - roundedPaid <= 0.009);
+    return !isPaid;
+  }).length;
 
   const handlePrintTestPage = () => {
     const testPrintContainer = document.createElement('div');

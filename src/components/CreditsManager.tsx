@@ -36,10 +36,58 @@ export default function CreditsManager({
   const [reminderType, setReminderType] = useState<'check_in' | 'due_soon' | 'overdue'>('check_in');
   const [reminderMessageDraft, setReminderMessageDraft] = useState('');
 
-  const selectedRecord = credits.find(r => r.id === selectedRecordId);
+  // Helper to normalize credit record status and balance precision
+  const normalizeCreditRecord = (r: CreditRecord): CreditRecord => {
+    const roundedTotal = Math.round((r.totalAmount || 0) * 100) / 100;
+    
+    // Sum all installment payments if payments array exists, otherwise use amountPaid
+    const totalPaymentsSum = (r.payments && r.payments.length > 0)
+      ? r.payments.reduce((acc, p) => acc + (p.amount || 0), 0)
+      : (r.amountPaid || 0);
+      
+    const roundedPaid = Math.round(totalPaymentsSum * 100) / 100;
+    const rawBalance = roundedTotal - roundedPaid;
+    
+    const isFullyPaid = rawBalance <= 0.009 || roundedPaid >= (roundedTotal - 0.009);
+    const balanceDue = isFullyPaid ? 0 : Math.max(0, Math.round(rawBalance * 100) / 100);
+    const status: 'unpaid' | 'partial' | 'paid' = isFullyPaid 
+      ? 'paid' 
+      : (roundedPaid > 0 ? 'partial' : 'unpaid');
+    const amountPaid = isFullyPaid ? roundedTotal : roundedPaid;
+
+    if (r.balanceDue !== balanceDue || r.status !== status || r.amountPaid !== amountPaid) {
+      return {
+        ...r,
+        amountPaid,
+        balanceDue,
+        status
+      };
+    }
+    return r;
+  };
+
+  // Auto-normalize records across the component
+  const normalizedCredits = credits.map(normalizeCreditRecord);
+
+  // Sync back auto-healed records to state if any status/balance mismatch was detected
+  React.useEffect(() => {
+    let needsUpdate = false;
+    const healed = credits.map(r => {
+      const norm = normalizeCreditRecord(r);
+      if (norm.status !== r.status || norm.balanceDue !== r.balanceDue || norm.amountPaid !== r.amountPaid) {
+        needsUpdate = true;
+      }
+      return norm;
+    });
+    if (needsUpdate) {
+      onUpdateCredits(healed);
+    }
+  }, [credits, onUpdateCredits]);
+
+  const selectedRecord = normalizedCredits.find(r => r.id === selectedRecordId);
 
   // General calculations for outstanding summaries
-  const unpaidRecords = credits.filter(r => r.status !== 'paid');
+  const unpaidRecords = normalizedCredits.filter(r => r.status !== 'paid');
   const totalOutstanding = unpaidRecords.reduce((sum, r) => sum + r.balanceDue, 0);
   const overdueCount = unpaidRecords.filter(r => Date.now() > r.dueDate).length;
   
@@ -66,7 +114,7 @@ export default function CreditsManager({
   }).length;
 
   // Filtered credits list
-  const filteredCredits = credits.filter(r => {
+  const filteredCredits = normalizedCredits.filter(r => {
     const matchesSearch = 
       r.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       r.customerPhone.includes(searchQuery) ||
@@ -90,7 +138,7 @@ export default function CreditsManager({
       return;
     }
     
-    if (amount > selectedRecord.balanceDue) {
+    if (amount > selectedRecord.balanceDue + 0.01) {
       alert(`The maximum payable balance is ${settings.currency}${selectedRecord.balanceDue.toFixed(2)}.`);
       return;
     }
@@ -104,15 +152,21 @@ export default function CreditsManager({
     };
     
     const updatedPayments = [...(selectedRecord.payments || []), newPayment];
-    const newAmountPaid = selectedRecord.amountPaid + amount;
-    const newBalanceDue = Math.max(0, selectedRecord.totalAmount - newAmountPaid);
+    const rawTotalPaid = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
+    const roundedTotal = Math.round(selectedRecord.totalAmount * 100) / 100;
+    const roundedPaid = Math.round(rawTotalPaid * 100) / 100;
+    const rawBalance = roundedTotal - roundedPaid;
+
+    const isFullyPaid = rawBalance <= 0.009 || roundedPaid >= (roundedTotal - 0.009);
+    const newBalanceDue = isFullyPaid ? 0 : Math.max(0, Math.round(rawBalance * 100) / 100);
+    const newStatus: 'unpaid' | 'partial' | 'paid' = isFullyPaid ? 'paid' : (roundedPaid > 0 ? 'partial' : 'unpaid');
     
     const updatedRecord: CreditRecord = {
       ...selectedRecord,
       payments: updatedPayments,
-      amountPaid: newAmountPaid,
+      amountPaid: isFullyPaid ? roundedTotal : roundedPaid,
       balanceDue: newBalanceDue,
-      status: newBalanceDue === 0 ? 'paid' : 'partial'
+      status: newStatus
     };
     
     const newCreditsList = credits.map(r => r.id === selectedRecord.id ? updatedRecord : r);
@@ -124,7 +178,7 @@ export default function CreditsManager({
     setPaymentMethod('cash');
     setActiveModal(null);
     setSelectedRecordId(null);
-    alert("Installment payment recorded and customer balance updated successfully.");
+    alert(isFullyPaid ? "Credit account fully settled and marked as paid!" : "Installment payment recorded and customer balance updated successfully.");
   };
 
   // ACKNOWLEDGE Friendly Check-in
@@ -571,24 +625,47 @@ export default function CreditsManager({
                 <label className="block text-[10px] text-slate-500 uppercase font-bold tracking-wider mb-1.5">Payment Channel</label>
                 <div className="grid grid-cols-3 gap-2">
                   {[
-                    { id: 'cash', label: 'Cash Tender', icon: DollarSign },
-                    { id: 'card', label: 'Card Device', icon: CreditCard },
-                    { id: 'mobile_money', label: 'Mobile Transfer', icon: Sparkles }
+                    {
+                      id: 'cash',
+                      label: 'Cash Tender',
+                      icon: DollarSign,
+                      activeClass: 'bg-emerald-600 border-emerald-600 text-white font-bold shadow-md ring-2 ring-emerald-500/30 dark:bg-emerald-600 dark:border-emerald-500',
+                      unactiveClass: 'bg-emerald-50/90 border-emerald-300 text-emerald-950 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:border-emerald-700 dark:text-emerald-100 dark:hover:bg-emerald-900/60',
+                      iconActive: 'text-white',
+                      iconUnactive: 'text-emerald-700 dark:text-emerald-400'
+                    },
+                    {
+                      id: 'card',
+                      label: 'Card Device',
+                      icon: CreditCard,
+                      activeClass: 'bg-blue-600 border-blue-600 text-white font-bold shadow-md ring-2 ring-blue-500/30 dark:bg-blue-600 dark:border-blue-500',
+                      unactiveClass: 'bg-blue-50/90 border-blue-300 text-blue-950 hover:bg-blue-100 dark:bg-blue-950/60 dark:border-blue-700 dark:text-blue-100 dark:hover:bg-blue-900/60',
+                      iconActive: 'text-white',
+                      iconUnactive: 'text-blue-700 dark:text-blue-400'
+                    },
+                    {
+                      id: 'mobile_money',
+                      label: 'Mobile Transfer',
+                      icon: Sparkles,
+                      activeClass: 'bg-purple-600 border-purple-600 text-white font-bold shadow-md ring-2 ring-purple-500/30 dark:bg-purple-600 dark:border-purple-500',
+                      unactiveClass: 'bg-purple-50/90 border-purple-300 text-purple-950 hover:bg-purple-100 dark:bg-purple-950/60 dark:border-purple-700 dark:text-purple-100 dark:hover:bg-purple-900/60',
+                      iconActive: 'text-white',
+                      iconUnactive: 'text-purple-700 dark:text-purple-400'
+                    }
                   ].map(item => {
                     const IconComp = item.icon;
+                    const isSelected = paymentMethod === item.id;
                     return (
                       <button
                         key={item.id}
                         type="button"
                         onClick={() => setPaymentMethod(item.id as any)}
-                        className={`p-2 rounded-lg border text-center flex flex-col items-center justify-center space-y-1 transition-all ${
-                          paymentMethod === item.id
-                            ? 'bg-slate-900 border-slate-900 text-white font-bold'
-                            : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                        className={`p-2 rounded-lg border text-center flex flex-col items-center justify-center space-y-1 transition-all cursor-pointer ${
+                          isSelected ? item.activeClass : item.unactiveClass
                         }`}
                       >
-                        <IconComp className="w-4 h-4" />
-                        <span className="text-[9px]">{item.label}</span>
+                        <IconComp className={`w-4 h-4 ${isSelected ? item.iconActive : item.iconUnactive}`} />
+                        <span className="text-[9px] font-bold">{item.label}</span>
                       </button>
                     );
                   })}

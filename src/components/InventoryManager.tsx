@@ -74,6 +74,8 @@ export default function InventoryManager({
   const [retailStock, setRetailStock] = useState('');
   const [minStockAlert, setMinStockAlert] = useState('5');
   const [unit, setUnit] = useState('pcs');
+  const [unitsPerCarton, setUnitsPerCarton] = useState('24');
+  const [cartonPrice, setCartonPrice] = useState('');
 
   // Customizable category states
   const [showCategoryManager, setShowCategoryManager] = useState(false);
@@ -423,7 +425,9 @@ export default function InventoryManager({
       wholesaleStock: parseInt(wholesaleStock, 10) || 0,
       retailStock: parseInt(retailStock, 10) || 0,
       minStockAlert: parseInt(minStockAlert, 10) || 5,
-      unit: unit.trim() || 'pcs'
+      unit: unit.trim() || 'pcs',
+      unitsPerCarton: parseInt(unitsPerCarton, 10) || 24,
+      cartonPrice: cartonPrice ? parseFloat(cartonPrice) : undefined
     });
 
     // Reset Form
@@ -436,6 +440,8 @@ export default function InventoryManager({
     setRetailStock('');
     setMinStockAlert('5');
     setUnit('pcs');
+    setUnitsPerCarton('24');
+    setCartonPrice('');
     setShowAddForm(false);
   };
 
@@ -937,6 +943,36 @@ export default function InventoryManager({
                   />
                 </div>
 
+                <div className="md:col-span-2 bg-amber-50/70 p-3 rounded-lg border border-amber-200/60 grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-amber-900 mb-1 font-bold">Units per Carton / Box</label>
+                    <input
+                      type="number"
+                      required
+                      min="1"
+                      value={unitsPerCarton}
+                      onChange={(e) => setUnitsPerCarton(e.target.value)}
+                      placeholder="24"
+                      className="w-full bg-white border border-amber-200 rounded-lg p-2 font-mono text-slate-800"
+                      id="new-product-units-per-carton"
+                    />
+                    <span className="text-[9.5px] text-amber-800 font-medium block mt-1">E.g. 24 pcs per wholesale carton</span>
+                  </div>
+                  <div>
+                    <label className="block text-amber-900 mb-1 font-bold">Full Carton Price ({settings.currency})</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={cartonPrice}
+                      onChange={(e) => setCartonPrice(e.target.value)}
+                      placeholder="e.g. 55.00"
+                      className="w-full bg-white border border-amber-200 rounded-lg p-2 font-mono text-slate-800"
+                      id="new-product-carton-price"
+                    />
+                    <span className="text-[9.5px] text-amber-800 font-medium block mt-1">Leave empty to auto-calculate from retail price</span>
+                  </div>
+                </div>
+
                 <div className="md:col-span-2">
                   <label className="block text-slate-500 mb-1 font-semibold text-slate-700">Unit Label (Product Type Unit)</label>
                   <input
@@ -1075,6 +1111,32 @@ export default function InventoryManager({
                     </div>
                   </div>
 
+                  <div className="grid grid-cols-2 gap-3 bg-amber-50/60 p-3 rounded-lg border border-amber-200/60">
+                    <div>
+                      <label className="block text-amber-900 mb-1 font-bold">Units per Carton</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={editingProduct.unitsPerCarton || 24}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, unitsPerCarton: parseInt(e.target.value, 10) || 24 })}
+                        className="w-full bg-white border border-amber-200 rounded p-2 text-slate-800 font-mono"
+                        id="edit-product-units-per-carton"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-amber-900 mb-1 font-bold">Full Carton Price ({settings.currency})</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editingProduct.cartonPrice || ''}
+                        onChange={(e) => setEditingProduct({ ...editingProduct, cartonPrice: e.target.value ? parseFloat(e.target.value) : undefined })}
+                        placeholder={(editingProduct.retailPrice * (editingProduct.unitsPerCarton || 24)).toFixed(2)}
+                        className="w-full bg-white border border-amber-200 rounded p-2 text-slate-800 font-mono"
+                        id="edit-product-carton-price"
+                      />
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200/60">
                     <div>
                       <label className="block text-slate-500 mb-1 font-semibold text-slate-700">Wholesale Stock</label>
@@ -1205,6 +1267,9 @@ export default function InventoryManager({
                           <td className="p-4">
                             <div className="font-semibold text-slate-800">{p.name}</div>
                             <div className="text-[10px] font-mono text-slate-400 tracking-wider mt-0.5">UPC: {p.barcode}</div>
+                            <div className="text-[9.5px] font-mono text-amber-900 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/60 inline-block mt-1 font-semibold">
+                              📦 Bulk Carton: {p.unitsPerCarton || 24} {p.unit || 'pcs'}/box ({settings.currency}{(p.cartonPrice || (p.retailPrice * (p.unitsPerCarton || 24))).toFixed(2)})
+                            </div>
                           </td>
                           <td className="p-4">
                             <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-medium uppercase">

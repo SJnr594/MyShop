@@ -267,33 +267,113 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
     }
   };
 
-  const addProductToCart = (product: Product) => {
-    const existingIndex = cart.findIndex(item => item.productId === product.id);
-    const alreadyInCartQty = existingIndex !== -1 ? cart[existingIndex].quantity : 0;
+  const addProductToCart = (
+    product: Product, 
+    packType: 'unit' | 'half_carton' | 'full_carton' | 'custom' = 'unit',
+    customCartonQty: number = 1
+  ) => {
+    const unitsPerCarton = product.unitsPerCarton || 24;
+    const totalAvailable = product.retailStock + (product.wholesaleStock * unitsPerCarton);
 
-    // Check shelf stock availability
-    if (product.retailStock <= alreadyInCartQty) {
+    let unitQtyToAdd = 1;
+    let packLabel = `Single ${product.unit || 'unit'}`;
+    let effectiveUnitPrice = product.retailPrice;
+
+    if (packType === 'full_carton') {
+      unitQtyToAdd = unitsPerCarton * customCartonQty;
+      const cartonTotal = product.cartonPrice || (product.retailPrice * unitsPerCarton);
+      effectiveUnitPrice = cartonTotal / unitsPerCarton;
+      packLabel = customCartonQty === 1 
+        ? `1 Full Carton (${unitsPerCarton} ${product.unit || 'pcs'})`
+        : `${customCartonQty} Full Cartons (${unitQtyToAdd} ${product.unit || 'pcs'})`;
+    } else if (packType === 'half_carton') {
+      const halfUnits = Math.max(1, Math.round(unitsPerCarton / 2));
+      unitQtyToAdd = halfUnits * customCartonQty;
+      const cartonTotal = product.cartonPrice || (product.retailPrice * unitsPerCarton);
+      effectiveUnitPrice = (cartonTotal / 2) / halfUnits;
+      packLabel = customCartonQty === 1 
+        ? `1 Half Carton (${halfUnits} ${product.unit || 'pcs'})`
+        : `${customCartonQty} Half Cartons (${unitQtyToAdd} ${product.unit || 'pcs'})`;
+    } else if (packType === 'custom') {
+      unitQtyToAdd = customCartonQty;
+      effectiveUnitPrice = product.retailPrice;
+      packLabel = `${customCartonQty} ${product.unit || 'pcs'}`;
+    }
+
+    const existingIndex = cart.findIndex(item => item.productId === product.id);
+    const alreadyInCartUnits = existingIndex !== -1 ? cart[existingIndex].quantity : 0;
+    const newTotalUnits = alreadyInCartUnits + unitQtyToAdd;
+
+    // Check total store stock across retail shelf and wholesale storehouse
+    if (totalAvailable < newTotalUnits) {
       playBeep(false);
-      alert(`Insufficient Shelf Stock! Only ${product.retailStock} units of "${product.name}" are available on store shelves.`);
+      alert(`Insufficient Inventory! Total store stock for "${product.name}" is ${totalAvailable} ${product.unit || 'units'} (${product.retailStock} shelf, ${product.wholesaleStock} unopened bulk cartons).`);
       return;
     }
 
     playBeep(true); // Play successful cash register chime
+
     if (existingIndex !== -1) {
       const updatedCart = [...cart];
-      updatedCart[existingIndex].quantity += 1;
+      updatedCart[existingIndex].quantity = newTotalUnits;
+      updatedCart[existingIndex].price = effectiveUnitPrice;
+      updatedCart[existingIndex].packType = packType;
+      updatedCart[existingIndex].packLabel = packLabel;
       setCart(updatedCart);
     } else {
       const newItem: SaleItem = {
         productId: product.id,
         productName: product.name,
         barcode: product.barcode,
-        quantity: 1,
-        price: product.retailPrice,
-        wholesaleCost: product.wholesaleCost
+        quantity: unitQtyToAdd,
+        price: effectiveUnitPrice,
+        wholesaleCost: product.wholesaleCost,
+        packType,
+        packLabel
       };
       setCart([...cart, newItem]);
     }
+  };
+
+  const changeCartItemPack = (index: number, newPackType: 'unit' | 'half_carton' | 'full_carton') => {
+    const item = cart[index];
+    const product = products.find(p => p.id === item.productId);
+    if (!product) return;
+
+    const unitsPerCarton = product.unitsPerCarton || 24;
+    const totalAvailable = product.retailStock + (product.wholesaleStock * unitsPerCarton);
+    const cartonTotal = product.cartonPrice || (product.retailPrice * unitsPerCarton);
+
+    let newQty = 1;
+    let packLabel = `Single ${product.unit || 'pcs'}`;
+    let effectiveUnitPrice = product.retailPrice;
+
+    if (newPackType === 'full_carton') {
+      newQty = unitsPerCarton;
+      effectiveUnitPrice = cartonTotal / unitsPerCarton;
+      packLabel = `1 Full Carton (${unitsPerCarton} ${product.unit || 'pcs'})`;
+    } else if (newPackType === 'half_carton') {
+      const halfUnits = Math.max(1, Math.round(unitsPerCarton / 2));
+      newQty = halfUnits;
+      effectiveUnitPrice = (cartonTotal / 2) / halfUnits;
+      packLabel = `1 Half Carton (${halfUnits} ${product.unit || 'pcs'})`;
+    } else {
+      newQty = 1;
+      effectiveUnitPrice = product.retailPrice;
+      packLabel = `Single ${product.unit || 'pcs'}`;
+    }
+
+    if (totalAvailable < newQty) {
+      alert(`Cannot set to ${packLabel}: Only ${totalAvailable} total ${product.unit || 'units'} available in store.`);
+      return;
+    }
+
+    const updatedCart = [...cart];
+    updatedCart[index].quantity = newQty;
+    updatedCart[index].price = effectiveUnitPrice;
+    updatedCart[index].packType = newPackType;
+    updatedCart[index].packLabel = packLabel;
+    setCart(updatedCart);
   };
 
   const addCustomItemToCart = (name: string, price: number, category: string) => {
@@ -317,9 +397,13 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
 
     const item = cart[index];
     const product = products.find(p => p.id === item.productId);
-    if (product && product.retailStock < newQty) {
-      alert(`Cannot exceed available shelf stock (${product.retailStock} units) for "${product.name}".`);
-      return;
+    if (product) {
+      const unitsPerCarton = product.unitsPerCarton || 24;
+      const totalAvailable = product.retailStock + (product.wholesaleStock * unitsPerCarton);
+      if (totalAvailable < newQty) {
+        alert(`Cannot exceed total store inventory (${totalAvailable} total ${product.unit || 'units'} across shelf & warehouse) for "${product.name}".`);
+        return;
+      }
     }
 
     const updatedCart = [...cart];
@@ -561,32 +645,69 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
 
           {/* Quick-add results display */}
           {searchQuery && (
-            <div className="bg-slate-50 rounded-lg p-3 border border-slate-200/60 max-h-48 overflow-y-auto space-y-1 animate-fadeIn">
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold block mb-1.5">Matching items found ({searchableProducts.length}):</span>
+            <div className="bg-slate-50 rounded-lg p-3 border border-slate-200/60 max-h-56 overflow-y-auto space-y-2 animate-fadeIn">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold block mb-1">Matching items found ({searchableProducts.length}):</span>
               {searchableProducts.length === 0 ? (
                 <div className="text-xs text-slate-400 text-center py-2">No matching items. Type a barcode or scan to add.</div>
               ) : (
-                searchableProducts.map(p => (
-                  <button
-                    key={p.id}
-                    onClick={() => {
-                      addProductToCart(p);
-                      setSearchQuery('');
-                    }}
-                    className="w-full text-left bg-white hover:bg-blue-50/40 p-2.5 rounded border border-slate-100 transition-all flex justify-between items-center text-xs hover:border-blue-100"
-                    type="button"
-                    id={`quick-add-${p.id}`}
-                  >
-                    <div>
-                      <span className="font-semibold text-slate-800">{p.name}</span>
-                      <span className="text-[10px] text-slate-400 font-mono block">UPC: {p.barcode} | Category: {p.category}</span>
+                searchableProducts.map(p => {
+                  const unitsPerCarton = p.unitsPerCarton || 24;
+                  const cartonPriceVal = p.cartonPrice || (p.retailPrice * unitsPerCarton);
+                  const totalStoreStock = p.retailStock + (p.wholesaleStock * unitsPerCarton);
+
+                  return (
+                    <div
+                      key={p.id}
+                      className="bg-white p-2.5 rounded-lg border border-slate-100 shadow-2xs hover:border-blue-200 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                    >
+                      <div>
+                        <div className="font-semibold text-slate-800 text-xs">{p.name}</div>
+                        <div className="text-[10px] text-slate-400 font-mono flex items-center gap-2 mt-0.5">
+                          <span>UPC: {p.barcode}</span>
+                          <span>|</span>
+                          <span className="text-blue-600 font-medium">Shelf: {p.retailStock} {p.unit || 'pcs'}</span>
+                          <span>|</span>
+                          <span className="text-amber-700 font-medium">Warehouse: {p.wholesaleStock} cartons ({p.wholesaleStock * unitsPerCarton} {p.unit || 'pcs'})</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            addProductToCart(p, 'unit');
+                            setSearchQuery('');
+                          }}
+                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold px-2 py-1 rounded transition-all cursor-pointer"
+                        >
+                          +1 {p.unit || 'Pc'} ({settings.currency}{p.retailPrice.toFixed(2)})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            addProductToCart(p, 'half_carton');
+                            setSearchQuery('');
+                          }}
+                          className="bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-bold px-2 py-1 rounded transition-all cursor-pointer"
+                          title={`Half carton (${Math.round(unitsPerCarton/2)} ${p.unit || 'pcs'})`}
+                        >
+                          +½ Carton ({settings.currency}{(cartonPriceVal / 2).toFixed(2)})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            addProductToCart(p, 'full_carton');
+                            setSearchQuery('');
+                          }}
+                          className="bg-amber-500 hover:bg-amber-600 text-white text-[10px] font-extrabold px-2 py-1 rounded shadow-2xs transition-all cursor-pointer"
+                          title={`Full carton (${unitsPerCarton} ${p.unit || 'pcs'})`}
+                        >
+                          +1 Carton ({settings.currency}{cartonPriceVal.toFixed(2)})
+                        </button>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <span className="font-bold font-mono text-slate-900">{settings.currency}{p.retailPrice.toFixed(2)}</span>
-                      <span className="text-[10px] text-blue-600 block font-medium">Shelf Stock: {p.retailStock} {p.unit || 'units'}</span>
-                    </div>
-                  </button>
-                ))
+                  );
+                })
               )}
             </div>
           )}
@@ -619,7 +740,7 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
           </div>
 
           {/* Interactive Catalog Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-2 max-h-[170px] overflow-y-auto pr-1 scrollbar-thin">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5 max-h-[220px] overflow-y-auto pr-1 scrollbar-thin">
             {products
               .filter(p => {
                 const matchesCategory = selectedCategory === 'All' || p.category === selectedCategory;
@@ -633,84 +754,72 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
               .map(p => {
                 const cartItem = cart.find(item => item.productId === p.id);
                 const qtyInCart = cartItem ? cartItem.quantity : 0;
-                const isOutOfStock = p.retailStock <= 0;
+                const unitsPerCarton = p.unitsPerCarton || 24;
+                const totalStoreStock = p.retailStock + (p.wholesaleStock * unitsPerCarton);
+                const isOutOfStock = totalStoreStock <= 0;
+                const cartonPriceVal = p.cartonPrice || (p.retailPrice * unitsPerCarton);
 
                 return (
                   <div 
                     key={p.id} 
-                    className={`p-2 rounded-xl border flex flex-col justify-between space-y-1.5 transition-all ${
+                    className={`p-2.5 rounded-xl border flex flex-col justify-between space-y-2 transition-all ${
                       qtyInCart > 0 
-                        ? 'bg-blue-50/40 border-blue-200' 
+                        ? 'bg-blue-50/40 border-blue-200 shadow-2xs' 
                         : isOutOfStock 
                           ? 'bg-slate-50 border-slate-100 opacity-60' 
-                          : 'bg-slate-50/50 border-slate-250/60 hover:border-slate-300 hover:bg-slate-50'
+                          : 'bg-slate-50/50 border-slate-200/60 hover:border-slate-300 hover:bg-slate-50'
                     }`}
                   >
-                    <div className="space-y-0.5">
-                      <div className="flex justify-between items-center text-[9px] font-bold text-slate-400">
-                        <span className="truncate max-w-[60px]">{p.category}</span>
+                    <div className="space-y-1">
+                      <div className="flex justify-between items-center text-[9px] font-bold">
+                        <span className="truncate max-w-[80px] text-slate-400">{p.category}</span>
                         {isOutOfStock ? (
-                          <span className="text-rose-600">OUT</span>
+                          <span className="text-rose-600 bg-rose-50 px-1 py-0.5 rounded">OUT OF STOCK</span>
                         ) : (
-                          <span className={p.retailStock <= 5 ? 'text-amber-600 font-bold' : 'text-slate-500'}>
-                            {p.retailStock} {p.unit || 'left'}
+                          <span className="text-slate-600 bg-white border border-slate-200 px-1.5 py-0.5 rounded font-mono">
+                            Shelf: <strong className={p.retailStock <= 5 ? 'text-amber-600 font-extrabold' : 'text-slate-800'}>{p.retailStock}</strong> | Whse: <strong className="text-blue-700">{p.wholesaleStock} ctn</strong>
                           </span>
                         )}
                       </div>
-                      <span className="font-bold text-slate-800 text-[10.5px] block truncate leading-tight" title={p.name}>
+                      <span className="font-bold text-slate-800 text-[11px] block truncate leading-tight" title={p.name}>
                         {p.name}
                       </span>
-                      <span className="font-mono font-bold text-slate-900 text-[10px] block">
-                        {settings.currency}{p.retailPrice.toFixed(2)}
-                      </span>
+                      <div className="flex items-center justify-between text-[10px] font-mono">
+                        <span className="font-bold text-slate-900">
+                          Unit: {settings.currency}{p.retailPrice.toFixed(2)}
+                        </span>
+                        <span className="text-amber-800 font-semibold bg-amber-50 px-1 rounded border border-amber-200/50">
+                          Ctn ({unitsPerCarton}): {settings.currency}{cartonPriceVal.toFixed(2)}
+                        </span>
+                      </div>
                     </div>
 
-                    {/* Quick controls inside the card */}
-                    <div>
-                      {qtyInCart === 0 ? (
-                        <button
-                          type="button"
-                          disabled={isOutOfStock}
-                          onClick={() => addProductToCart(p)}
-                          className={`w-full font-bold text-[9px] py-1 px-1.5 rounded-lg transition-all flex items-center justify-center space-x-1 ${
-                            isOutOfStock 
-                              ? 'bg-slate-200 text-slate-400 cursor-not-allowed' 
-                              : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 shadow-2xs active:scale-95 cursor-pointer'
-                          }`}
-                        >
-                          <span>➕ Add</span>
-                        </button>
-                      ) : (
-                        <div className="flex items-center justify-between w-full bg-white border border-blue-100 rounded-lg p-0.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const itemIndex = cart.findIndex(item => item.productId === p.id);
-                              if (itemIndex !== -1) {
-                                updateCartQty(itemIndex, qtyInCart - 1);
-                              }
-                            }}
-                            className="w-5 h-5 bg-slate-50 hover:bg-slate-100 text-slate-800 font-extrabold rounded flex items-center justify-center transition-all text-[11px] cursor-pointer"
-                          >
-                            -
-                          </button>
-                          <span className="font-mono font-bold text-[9px] text-blue-700">
-                            {qtyInCart}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const itemIndex = cart.findIndex(item => item.productId === p.id);
-                              if (itemIndex !== -1) {
-                                updateCartQty(itemIndex, qtyInCart + 1);
-                              }
-                            }}
-                            className="w-5 h-5 bg-slate-50 hover:bg-slate-100 text-slate-800 font-extrabold rounded flex items-center justify-center transition-all text-[11px] cursor-pointer"
-                          >
-                            +
-                          </button>
-                        </div>
-                      )}
+                    {/* Quick Bulk Pack Add Controls */}
+                    <div className="pt-1 border-t border-slate-100 flex items-center justify-between gap-1">
+                      <button
+                        type="button"
+                        disabled={isOutOfStock}
+                        onClick={() => addProductToCart(p, 'unit')}
+                        className="flex-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-[9px] font-bold py-1 px-1 rounded transition-all cursor-pointer text-center"
+                      >
+                        +1 {p.unit || 'pc'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isOutOfStock}
+                        onClick={() => addProductToCart(p, 'half_carton')}
+                        className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 text-[9px] font-bold py-1 px-1 rounded transition-all cursor-pointer text-center"
+                      >
+                        +½ Carton
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isOutOfStock}
+                        onClick={() => addProductToCart(p, 'full_carton')}
+                        className="flex-1 bg-amber-500 hover:bg-amber-600 text-white text-[9px] font-black py-1 px-1 rounded transition-all cursor-pointer text-center shadow-2xs"
+                      >
+                        +1 Carton
+                      </button>
                     </div>
                   </div>
                 );
@@ -745,55 +854,126 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
                     </td>
                   </tr>
                 ) : (
-                  cart.map((item, idx) => (
-                    <tr key={item.productId} className="hover:bg-slate-50/50">
-                      <td className="p-4">
-                        <div className="font-semibold text-slate-800">{item.productName}</div>
-                        <div className="text-[10px] font-mono text-slate-400 mt-0.5">Barcode: {item.barcode}</div>
-                      </td>
-                      <td className="p-4 font-mono text-right text-slate-600">
-                        {settings.currency}{item.price.toFixed(2)}
-                      </td>
-                      <td className="p-4">
-                        <div className="flex items-center justify-center space-x-1.5">
+                  cart.map((item, idx) => {
+                    const prod = products.find(p => p.id === item.productId);
+                    const unitsPerCarton = prod?.unitsPerCarton || 24;
+                    const isExceedingShelf = prod ? item.quantity > prod.retailStock : false;
+                    const autoCartonsNeeded = prod && isExceedingShelf 
+                      ? Math.ceil((item.quantity - prod.retailStock) / unitsPerCarton) 
+                      : 0;
+
+                    return (
+                      <tr key={item.productId} className="hover:bg-slate-50/50">
+                        <td className="p-4">
+                          <div className="font-semibold text-slate-800 flex items-center gap-1.5 flex-wrap">
+                            <span>{item.productName}</span>
+                            {item.packLabel && (
+                              <span className="bg-amber-100 text-amber-900 border border-amber-300/60 font-bold text-[9.5px] px-2 py-0.5 rounded-full font-mono">
+                                📦 {item.packLabel}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-400 mt-0.5">
+                            Barcode: {item.barcode}
+                          </div>
+
+                          {/* Pack Type Quick Selector */}
+                          {prod && (
+                            <div className="flex items-center gap-1 mt-1.5">
+                              <span className="text-[9px] text-slate-400 font-bold uppercase">Pack:</span>
+                              <button
+                                type="button"
+                                onClick={() => changeCartItemPack(idx, 'unit')}
+                                className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all cursor-pointer ${
+                                  item.packType === 'unit' || !item.packType
+                                    ? 'bg-slate-900 text-white'
+                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                }`}
+                              >
+                                Single
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => changeCartItemPack(idx, 'half_carton')}
+                                className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all cursor-pointer ${
+                                  item.packType === 'half_carton'
+                                    ? 'bg-blue-600 text-white'
+                                    : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200/60'
+                                }`}
+                              >
+                                ½ Carton
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => changeCartItemPack(idx, 'full_carton')}
+                                className={`text-[9px] font-bold px-1.5 py-0.5 rounded transition-all cursor-pointer ${
+                                  item.packType === 'full_carton'
+                                    ? 'bg-amber-600 text-white'
+                                    : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200/60'
+                                }`}
+                              >
+                                1 Carton
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Auto wholesale stock conversion indicator */}
+                          {autoCartonsNeeded > 0 && (
+                            <div className="text-[9.5px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-0.5 mt-1.5 flex items-center gap-1">
+                              <span>⚡ Auto-opens {autoCartonsNeeded} bulk carton(s) from warehouse stock at checkout</span>
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-4 font-mono text-right text-slate-600">
+                          <div>{settings.currency}{item.price.toFixed(2)}</div>
+                          <div className="text-[9px] text-slate-400">/ single unit</div>
+                        </td>
+                        <td className="p-4">
+                          <div className="flex flex-col items-center justify-center space-y-1">
+                            <div className="flex items-center space-x-1.5">
+                              <button
+                                onClick={() => updateCartQty(idx, item.quantity - 1)}
+                                className="w-6 h-6 border border-slate-200 hover:border-slate-400 rounded-lg flex items-center justify-center text-slate-600 active:bg-slate-100 font-bold transition-all cursor-pointer"
+                                id={`qty-minus-${item.productId}`}
+                              >
+                                -
+                              </button>
+                              <input
+                                type="number"
+                                min="1"
+                                value={item.quantity}
+                                onChange={(e) => updateCartQty(idx, parseInt(e.target.value, 10) || 1)}
+                                className="w-12 text-center font-mono border border-slate-200 rounded p-1 text-xs font-bold"
+                                id={`qty-input-${item.productId}`}
+                              />
+                              <button
+                                onClick={() => updateCartQty(idx, item.quantity + 1)}
+                                className="w-6 h-6 border border-slate-200 hover:border-slate-400 rounded-lg flex items-center justify-center text-slate-600 active:bg-slate-100 font-bold transition-all cursor-pointer"
+                                id={`qty-plus-${item.productId}`}
+                              >
+                                +
+                              </button>
+                            </div>
+                            <span className="text-[9.5px] font-mono text-slate-400">
+                              {item.quantity} total {prod?.unit || 'pcs'}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="p-4 font-mono text-right font-bold text-slate-900">
+                          {settings.currency}{(item.price * item.quantity).toFixed(2)}
+                        </td>
+                        <td className="p-4 text-center">
                           <button
-                            onClick={() => updateCartQty(idx, item.quantity - 1)}
-                            className="w-6 h-6 border border-slate-200 hover:border-slate-400 rounded-lg flex items-center justify-center text-slate-600 active:bg-slate-100 font-bold transition-all"
-                            id={`qty-minus-${item.productId}`}
+                            onClick={() => removeCartItem(idx)}
+                            className="text-slate-400 hover:text-red-500 p-1 cursor-pointer"
+                            id={`remove-item-${item.productId}`}
                           >
-                            -
+                            <Trash2 className="w-4 h-4" />
                           </button>
-                          <input
-                            type="number"
-                            min="1"
-                            value={item.quantity}
-                            onChange={(e) => updateCartQty(idx, parseInt(e.target.value, 10) || 1)}
-                            className="w-10 text-center font-mono border border-slate-200 rounded p-1 text-xs"
-                            id={`qty-input-${item.productId}`}
-                          />
-                          <button
-                            onClick={() => updateCartQty(idx, item.quantity + 1)}
-                            className="w-6 h-6 border border-slate-200 hover:border-slate-400 rounded-lg flex items-center justify-center text-slate-600 active:bg-slate-100 font-bold transition-all"
-                            id={`qty-plus-${item.productId}`}
-                          >
-                            +
-                          </button>
-                        </div>
-                      </td>
-                      <td className="p-4 font-mono text-right font-bold text-slate-900">
-                        {settings.currency}{(item.price * item.quantity).toFixed(2)}
-                      </td>
-                      <td className="p-4 text-center">
-                        <button
-                          onClick={() => removeCartItem(idx)}
-                          className="text-slate-400 hover:text-red-500 p-1"
-                          id={`remove-item-${item.productId}`}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -857,25 +1037,56 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
               <span className="block text-slate-500 mb-1.5">Payment Method</span>
               <div className="grid grid-cols-2 gap-2">
                 {[
-                  { id: 'cash', label: 'Cash Tendered', icon: DollarSign },
-                  { id: 'card', label: 'Credit/Debit Card', icon: CreditCard },
-                  { id: 'mobile_money', label: 'Mobile Transfer', icon: Sparkles },
-                  { id: 'credit', label: 'Store Credit', icon: User }
+                  {
+                    id: 'cash',
+                    label: 'Cash Tendered',
+                    icon: DollarSign,
+                    activeClass: 'bg-emerald-600 border-emerald-600 text-white shadow-md font-bold ring-2 ring-emerald-500/30 dark:bg-emerald-600 dark:border-emerald-500',
+                    unactiveClass: 'bg-emerald-50/90 border-emerald-300 text-emerald-950 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:border-emerald-700 dark:text-emerald-100 dark:hover:bg-emerald-900/60',
+                    iconActive: 'text-white',
+                    iconUnactive: 'text-emerald-700 dark:text-emerald-400'
+                  },
+                  {
+                    id: 'card',
+                    label: 'Credit/Debit Card',
+                    icon: CreditCard,
+                    activeClass: 'bg-blue-600 border-blue-600 text-white shadow-md font-bold ring-2 ring-blue-500/30 dark:bg-blue-600 dark:border-blue-500',
+                    unactiveClass: 'bg-blue-50/90 border-blue-300 text-blue-950 hover:bg-blue-100 dark:bg-blue-950/60 dark:border-blue-700 dark:text-blue-100 dark:hover:bg-blue-900/60',
+                    iconActive: 'text-white',
+                    iconUnactive: 'text-blue-700 dark:text-blue-400'
+                  },
+                  {
+                    id: 'mobile_money',
+                    label: 'Mobile Transfer',
+                    icon: Sparkles,
+                    activeClass: 'bg-purple-600 border-purple-600 text-white shadow-md font-bold ring-2 ring-purple-500/30 dark:bg-purple-600 dark:border-purple-500',
+                    unactiveClass: 'bg-purple-50/90 border-purple-300 text-purple-950 hover:bg-purple-100 dark:bg-purple-950/60 dark:border-purple-700 dark:text-purple-100 dark:hover:bg-purple-900/60',
+                    iconActive: 'text-white',
+                    iconUnactive: 'text-purple-700 dark:text-purple-400'
+                  },
+                  {
+                    id: 'credit',
+                    label: 'Store Credit',
+                    icon: User,
+                    activeClass: 'bg-amber-600 border-amber-600 text-white shadow-md font-bold ring-2 ring-amber-500/30 dark:bg-amber-600 dark:border-amber-500',
+                    unactiveClass: 'bg-amber-50/90 border-amber-300 text-amber-950 hover:bg-amber-100 dark:bg-amber-950/60 dark:border-amber-700 dark:text-amber-100 dark:hover:bg-amber-900/60',
+                    iconActive: 'text-white',
+                    iconUnactive: 'text-amber-700 dark:text-amber-400'
+                  }
                 ].map((item) => {
                   const IconComponent = item.icon;
+                  const isSelected = paymentMethod === item.id;
                   return (
                     <button
                       key={item.id}
                       type="button"
                       onClick={() => setPaymentMethod(item.id as Sale['paymentMethod'])}
-                      className={`p-2.5 rounded-lg border text-left font-semibold flex items-center space-x-2 transition-all ${
-                        paymentMethod === item.id 
-                          ? 'bg-slate-900 border-slate-900 text-white shadow-sm' 
-                          : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
+                      className={`p-2.5 rounded-lg border text-left font-bold flex items-center space-x-2 transition-all cursor-pointer ${
+                        isSelected ? item.activeClass : item.unactiveClass
                       }`}
                       id={`pay-method-${item.id}`}
                     >
-                      <IconComponent className="w-4 h-4 shrink-0" />
+                      <IconComponent className={`w-4 h-4 shrink-0 ${isSelected ? item.iconActive : item.iconUnactive}`} />
                       <span className="text-[11px] truncate">{item.label}</span>
                     </button>
                   );

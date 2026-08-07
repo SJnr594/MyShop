@@ -9,21 +9,25 @@ export const SAMPLE_PRODUCTS: Product[] = [
     wholesaleCost: 4.50,
     retailPrice: 7.99,
     wholesaleStock: 24, // 24 boxes in bulk
-    retailStock: 5,     // 5 boxes on shelf
+    retailStock: 15,     // 15 boxes on shelf
     minStockAlert: 8,
-    unit: 'boxes'
+    unit: 'pcs',
+    unitsPerCarton: 12,
+    cartonPrice: 90.00
   },
   {
     id: 'prod_2',
     barcode: '012000042431', // Pepsi Co Soda
-    name: 'Pepsi Soda 12-Pack Cans',
+    name: 'Pepsi Soda Cans (Single / Carton)',
     category: 'Wholesale 2',
-    wholesaleCost: 3.20,
-    retailPrice: 5.49,
+    wholesaleCost: 1.20,
+    retailPrice: 2.50,
     wholesaleStock: 15,
-    retailStock: 4,
-    minStockAlert: 5,
-    unit: 'packs'
+    retailStock: 30,
+    minStockAlert: 10,
+    unit: 'cans',
+    unitsPerCarton: 24,
+    cartonPrice: 55.00
   },
   {
     id: 'prod_3',
@@ -35,7 +39,9 @@ export const SAMPLE_PRODUCTS: Product[] = [
     wholesaleStock: 30,
     retailStock: 12,
     minStockAlert: 10,
-    unit: 'bags'
+    unit: 'bags',
+    unitsPerCarton: 20,
+    cartonPrice: 60.00
   },
   {
     id: 'prod_4',
@@ -45,9 +51,11 @@ export const SAMPLE_PRODUCTS: Product[] = [
     wholesaleCost: 1.10,
     retailPrice: 2.19,
     wholesaleStock: 40,
-    retailStock: 8,
+    retailStock: 18,
     minStockAlert: 12,
-    unit: 'bottles'
+    unit: 'bottles',
+    unitsPerCarton: 12,
+    cartonPrice: 24.00
   },
   {
     id: 'prod_5',
@@ -57,9 +65,11 @@ export const SAMPLE_PRODUCTS: Product[] = [
     wholesaleCost: 2.10,
     retailPrice: 3.89,
     wholesaleStock: 18,
-    retailStock: 3, // Low stock on shelf!
+    retailStock: 8,
     minStockAlert: 6,
-    unit: 'bottles'
+    unit: 'bottles',
+    unitsPerCarton: 12,
+    cartonPrice: 42.00
   },
   {
     id: 'prod_6',
@@ -69,9 +79,11 @@ export const SAMPLE_PRODUCTS: Product[] = [
     wholesaleCost: 1.95,
     retailPrice: 3.19,
     wholesaleStock: 10,
-    retailStock: 2, // Very low stock!
-    minStockAlert: 4,
-    unit: 'gallons'
+    retailStock: 12,
+    minStockAlert: 5,
+    unit: 'jugs',
+    unitsPerCarton: 6,
+    cartonPrice: 18.00
   },
   {
     id: 'prod_7',
@@ -83,7 +95,9 @@ export const SAMPLE_PRODUCTS: Product[] = [
     wholesaleStock: 100,
     retailStock: 25,
     minStockAlert: 15,
-    unit: 'boxes'
+    unit: 'boxes',
+    unitsPerCarton: 24,
+    cartonPrice: 28.00
   }
 ];
 

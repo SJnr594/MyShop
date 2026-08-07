@@ -9,15 +9,19 @@ export interface Product {
   retailStock: number;    // Stock placed on retail shelves
   minStockAlert: number;  // Threshold for low stock warning
   unit?: string;          // Customizable unit label (e.g., pcs, kg, box, bottle)
+  unitsPerCarton?: number; // Number of single units in 1 full carton/box (e.g. 24)
+  cartonPrice?: number;   // Special discounted price for 1 full carton
 }
 
 export interface SaleItem {
   productId: string;
   productName: string;
   barcode: string;
-  quantity: number;
-  price: number;          // Retail price at purchase
-  wholesaleCost: number;  // Wholesale cost at purchase (for accurate profit margins)
+  quantity: number;       // Total single units deducted from stock
+  price: number;          // Effective price per single unit
+  wholesaleCost: number;  // Wholesale cost at purchase
+  packType?: 'unit' | 'half_carton' | 'full_carton' | 'custom';
+  packLabel?: string;     // Display label for receipt e.g. "Full Carton (24 pcs)"
 }
 
 export interface Sale {

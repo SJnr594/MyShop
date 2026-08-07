@@ -38,6 +38,10 @@ export interface Sale {
   notes?: string;
   cashierName?: string;
   dueDate?: number;
+  isFinalized?: boolean;
+  checkedBy?: string;
+  checkedTimestamp?: number;
+  crossCheckNotes?: string;
 }
 
 export interface VoidedSaleRecord {
@@ -112,6 +116,11 @@ export interface StoreSettings {
   taxRate: number; // e.g. 16 for 16%
   receiptHeader: string;
   receiptFooter: string;
+  retailReceiptFormat?: '80mm' | '58mm' | 'A4';
+  wholesaleReceiptFormat?: 'A4' | '80mm' | 'Letter';
+  wholesaleTerms?: string;
+  printerDriverType?: 'thermal_escpos' | 'dot_matrix' | 'laser_inkjet' | 'bluetooth_mobile';
+  autoPrintEnabled?: boolean;
   isSetupCompleted: boolean;
   onlineBackupEnabled: boolean;
   firebaseConfig?: {

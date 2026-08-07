@@ -433,6 +433,14 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
   const taxAmount = taxableAmount * (settings.taxRate / 100);
   const finalTotal = taxableAmount + taxAmount;
 
+  const autoSetReceiptFormat = (items: SaleItem[], pMethod: string) => {
+    const isWholesale = pMethod === 'credit' || items.some(i => i.packType === 'full_carton' || i.packType === 'half_carton' || (i.packLabel && i.packLabel.toLowerCase().includes('carton')));
+    const defaultFmt = isWholesale 
+      ? (settings.wholesaleReceiptFormat === 'Letter' ? 'A4' : (settings.wholesaleReceiptFormat || 'A4'))
+      : (settings.retailReceiptFormat || '80mm');
+    setPrintFormat(defaultFmt);
+  };
+
   const handleCheckoutSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (cart.length === 0) return;
@@ -443,6 +451,9 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
         return;
       }
     }
+
+    // Auto-select receipt template format based on transaction type and settings
+    autoSetReceiptFormat(cart, paymentMethod);
 
     // Perform checkout logic (deduct shelf stock, add sale)
     const saleData = {
@@ -461,6 +472,12 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
 
     const finalizedSale = onCheckout(saleData);
     setCompletedSale(finalizedSale);
+
+    if (settings.autoPrintEnabled) {
+      setTimeout(() => {
+        window.print();
+      }, 350);
+    }
   };
 
   const triggerPrintReceipt = () => {
@@ -1192,6 +1209,7 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
                       setCheckedItems(false);
                       setCheckedCustomer(false);
                       setCheckedPayment(false);
+                      autoSetReceiptFormat(cart, paymentMethod);
                       setShowPrintPreview(true);
                     }
                   }}
@@ -1204,7 +1222,7 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
                   id="checkout-preview-btn"
                 >
                   <Printer className="w-4 h-4 text-slate-500" />
-                  <span>80mm Preview</span>
+                  <span>Draft Preview</span>
                 </button>
 
                 <button
@@ -2198,15 +2216,15 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
       </div> 
 
       {/* DESKTOP KEYBOARD HOTKEYS BAR */}
-      <div className="bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs text-slate-500 font-sans print:hidden shadow-inner select-none" id="keyboard-hotkeys-status">
-        <span className="font-bold text-slate-700 uppercase text-[9px] tracking-wider font-mono">Quick hotkeys:</span>
-        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F1</kbd> <span className="text-slate-600 text-[11px]">Hardware Help</span></div>
-        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F2</kbd> <span className="text-slate-600 text-[11px]">Reset Cart</span></div>
-        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F3</kbd> <span className="text-slate-600 text-[11px]">Search Input</span></div>
-        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F4</kbd> <span className="text-slate-600 text-[11px]">Toggle Scanner</span></div>
-        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F8</kbd> <span className="text-slate-600 text-[11px]">Add Custom Item</span></div>
-        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F9</kbd> <span className="text-emerald-700 font-semibold text-[11px]">Book & Print</span></div>
-        <div className="flex items-center space-x-1"><kbd className="bg-white border border-slate-300 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">Esc</kbd> <span className="text-slate-600 text-[11px]">Reset / Close</span></div>
+      <div className="bg-slate-50 dark:bg-slate-900/90 border border-slate-200/60 dark:border-slate-800 rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs text-slate-500 dark:text-slate-400 font-sans print:hidden shadow-inner select-none" id="keyboard-hotkeys-status">
+        <span className="font-bold text-slate-700 dark:text-slate-300 uppercase text-[9px] tracking-wider font-mono">Quick hotkeys:</span>
+        <div className="flex items-center space-x-1"><kbd className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F1</kbd> <span className="text-slate-600 dark:text-slate-300 text-[11px]">Hardware Help</span></div>
+        <div className="flex items-center space-x-1"><kbd className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F2</kbd> <span className="text-slate-600 dark:text-slate-300 text-[11px]">Reset Cart</span></div>
+        <div className="flex items-center space-x-1"><kbd className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F3</kbd> <span className="text-slate-600 dark:text-slate-300 text-[11px]">Search Input</span></div>
+        <div className="flex items-center space-x-1"><kbd className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F4</kbd> <span className="text-slate-600 dark:text-slate-300 text-[11px]">Toggle Scanner</span></div>
+        <div className="flex items-center space-x-1"><kbd className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F8</kbd> <span className="text-slate-600 dark:text-slate-300 text-[11px]">Add Custom Item</span></div>
+        <div className="flex items-center space-x-1"><kbd className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">F9</kbd> <span className="text-emerald-700 dark:text-emerald-400 font-semibold text-[11px]">Book & Print</span></div>
+        <div className="flex items-center space-x-1"><kbd className="bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold shadow-2xs">Esc</kbd> <span className="text-slate-600 dark:text-slate-300 text-[11px]">Reset / Close</span></div>
       </div>
 
     </div> /* Close of checkout-terminal-wrapper */

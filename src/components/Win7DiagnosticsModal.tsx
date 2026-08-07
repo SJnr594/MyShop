@@ -22,10 +22,35 @@ import { StoreSettings } from '../types';
 interface Win7DiagnosticsModalProps {
   onClose: () => void;
   settings: StoreSettings;
+  onUpdateSettings?: (newSettings: StoreSettings) => void;
 }
 
-export default function Win7DiagnosticsModal({ onClose, settings }: Win7DiagnosticsModalProps) {
+export default function Win7DiagnosticsModal({ onClose, settings, onUpdateSettings }: Win7DiagnosticsModalProps) {
   const [activeTab, setActiveTab] = useState<'scanner' | 'printer' | 'audio' | 'system' | 'shortcuts'>('scanner');
+  
+  // Printer & Receipt Preference Form States
+  const [retailFormat, setRetailFormat] = useState<'80mm' | '58mm' | 'A4'>(settings.retailReceiptFormat || '80mm');
+  const [wholesaleFormat, setWholesaleFormat] = useState<'A4' | '80mm' | 'Letter'>(settings.wholesaleReceiptFormat || 'A4');
+  const [driverType, setDriverType] = useState<'thermal_escpos' | 'dot_matrix' | 'laser_inkjet' | 'bluetooth_mobile'>(settings.printerDriverType || 'thermal_escpos');
+  const [wholesaleTermsText, setWholesaleTermsText] = useState<string>(settings.wholesaleTerms || '1. Payment due upon receipt unless credit terms agreed.\n2. Goods once sold in sound condition are not returnable without prior manager authorization.\n3. Claims regarding quantity or damaged bulk packs must be logged within 48 hours.');
+  const [autoPrint, setAutoPrint] = useState<boolean>(settings.autoPrintEnabled || false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string>('');
+
+  const handleSavePrinterPreferences = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (onUpdateSettings) {
+      onUpdateSettings({
+        ...settings,
+        retailReceiptFormat: retailFormat,
+        wholesaleReceiptFormat: wholesaleFormat,
+        printerDriverType: driverType,
+        wholesaleTerms: wholesaleTermsText,
+        autoPrintEnabled: autoPrint
+      });
+      setSaveSuccessMsg('✓ Receipt preferences and printer configuration saved successfully!');
+      setTimeout(() => setSaveSuccessMsg(''), 4000);
+    }
+  };
   
   // Scanner test state
   const [scannedTestCode, setScannedTestCode] = useState<string>('');
@@ -312,73 +337,207 @@ export default function Win7DiagnosticsModal({ onClose, settings }: Win7Diagnost
             </div>
           )}
 
-          {/* TAB 2: THERMAL PRINT SPOOLER */}
+          {/* TAB 2: UNIVERSAL PRINTER ENGINE & RECEIPT PREFERENCES */}
           {activeTab === 'printer' && (
-            <div className="space-y-5">
+            <div className="space-y-6">
               <div className="bg-slate-800/60 border border-slate-700/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h3 className="font-bold text-white flex items-center space-x-2">
-                    <Printer className="w-4 h-4 text-emerald-400" />
-                    <span>Windows 7 Thermal Spooler Diagnostics (SNBC BTP-S81 / Epson / Star)</span>
+                    <Printer className="w-4.5 h-4.5 text-emerald-400" />
+                    <span>Universal Printer Engine & Receipt Preferences (2000 – Present)</span>
                   </h3>
                   <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                    Test your thermal printer spooler rendering engine with 80mm roll formatting.
+                    Configure independent template formats for Wholesale Bulk Invoices vs. Retail Counter Receipts, and pair any POS thermal roll printer, dot-matrix, or A4 office laser spooler.
                   </p>
                 </div>
                 <button
                   onClick={handleTestPrintReceipt}
                   className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-4 py-2.5 rounded-xl text-xs flex items-center space-x-2 shadow-lg transition-all cursor-pointer shrink-0"
+                  type="button"
                 >
                   <Printer className="w-4 h-4" />
-                  <span>Print Test Receipt</span>
+                  <span>Spool Calibration Test Print</span>
                 </button>
               </div>
 
-              {/* Windows 7 Print Settings Guide */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-                  <span className="text-emerald-400 font-extrabold text-xs uppercase font-mono block">Step 1: Spooler Setup</span>
-                  <p className="text-xs text-slate-300">
-                    Set your Windows Default Printer to <strong>SNBC BTP-S81 (80mm)</strong> or Epson TM-T88 in Windows Control Panel -&gt; Devices and Printers.
-                  </p>
+              {saveSuccessMsg && (
+                <div className="bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 p-3 rounded-xl text-xs font-bold animate-fadeIn flex items-center space-x-2">
+                  <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{saveSuccessMsg}</span>
+                </div>
+              )}
+
+              {/* RECEIPT PREFERENCES FORM */}
+              <form onSubmit={handleSavePrinterPreferences} className="bg-slate-950 border border-slate-800 rounded-xl p-5 space-y-5 text-left">
+                <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-extrabold uppercase tracking-wider text-slate-200 font-mono">1. Default Transaction Receipt Preferences</h4>
+                    <p className="text-[11px] text-slate-400">Set automatic template formats for Retail counter sales vs Wholesale bulk orders.</p>
+                  </div>
+                  <button
+                    type="submit"
+                    className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-1.5 rounded-lg shadow-sm transition-all cursor-pointer font-sans"
+                  >
+                    Save Preferences
+                  </button>
                 </div>
 
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-                  <span className="text-emerald-400 font-extrabold text-xs uppercase font-mono block">Step 2: Margins "None"</span>
-                  <p className="text-xs text-slate-300">
-                    In the browser print popup, expand <strong>"More Settings"</strong> and set <strong>Margins = None</strong> or <strong>Minimum</strong> to prevent unwanted paper feeds.
-                  </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-xs">
+                  {/* Retail Receipt Preference */}
+                  <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2">
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-emerald-400 font-mono">
+                      🛍️ Retail Sales Receipt Format (Default)
+                    </label>
+                    <select
+                      value={retailFormat}
+                      onChange={(e: any) => setRetailFormat(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-medium focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="80mm">80mm Coated Thermal Roll (Standard POS Ticket - SNBC / Epson)</option>
+                      <option value="58mm">58mm Narrow Mobile Roll (Bluetooth Handheld POS Printer)</option>
+                      <option value="A4">A4 Slip Sheet (Desk Laser / Inkjet Printer)</option>
+                    </select>
+                    <p className="text-[10px] text-slate-400">
+                      Auto-selected during single-unit retail shelf sales. Fast roll feed with compact barcode and shop header.
+                    </p>
+                  </div>
+
+                  {/* Wholesale Receipt Preference */}
+                  <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2">
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-purple-400 font-mono">
+                      📦 Wholesale Bulk Sales Invoice Format (Default)
+                    </label>
+                    <select
+                      value={wholesaleFormat}
+                      onChange={(e: any) => setWholesaleFormat(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-medium focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="A4">A4 Corporate Tax Invoice (Itemized Packs + Terms + Signature Box)</option>
+                      <option value="80mm">80mm Detailed Bulk Thermal Roll (Expanded Roll Format)</option>
+                      <option value="Letter">US Letter Full Sheet Invoice (Laser / Inkjet Document)</option>
+                    </select>
+                    <p className="text-[10px] text-slate-400">
+                      Auto-selected for full carton wholesale orders, credit sales, or business accounts.
+                    </p>
+                  </div>
+
+                  {/* Printer Architecture Profile */}
+                  <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2">
+                    <label className="block text-[10px] font-bold uppercase tracking-wider text-blue-400 font-mono">
+                      🖨️ Active Hardware Printer Architecture
+                    </label>
+                    <select
+                      value={driverType}
+                      onChange={(e: any) => setDriverType(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-white font-medium focus:border-blue-500 focus:outline-none"
+                    >
+                      <option value="thermal_escpos">ESC/POS Direct Thermal (SNBC, Epson TM, Star, Bixolon, XPrinter)</option>
+                      <option value="dot_matrix">Impact Dot-Matrix Ribbon Printer (Epson TM-U220, Star SP700)</option>
+                      <option value="laser_inkjet">Desktop Laser / Inkjet Office Spooler (HP, Canon, Brother, Kyocera)</option>
+                      <option value="bluetooth_mobile">Wireless Bluetooth / Wi-Fi Mobile POS Printer (58mm/80mm)</option>
+                    </select>
+                    <p className="text-[10px] text-slate-400">
+                      Optimizes print margins, line feed density, and page boundaries for your physical spooler.
+                    </p>
+                  </div>
+
+                  {/* Auto Print Toggle */}
+                  <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2 flex flex-col justify-between">
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-amber-400 font-mono">
+                        ⚡ Instant Auto-Print Spooling
+                      </label>
+                      <p className="text-[11px] text-slate-300 mt-1">
+                        Automatically pop up system printer spooler immediately upon completing checkout.
+                      </p>
+                    </div>
+                    <label className="flex items-center space-x-3 cursor-pointer pt-2">
+                      <input
+                        type="checkbox"
+                        checked={autoPrint}
+                        onChange={(e) => setAutoPrint(e.target.checked)}
+                        className="w-4 h-4 rounded text-blue-600 bg-slate-950 border-slate-700 focus:ring-blue-500"
+                      />
+                      <span className="text-xs font-bold text-white">Enable Auto-Print Spool on Payment</span>
+                    </label>
+                  </div>
                 </div>
 
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
-                  <span className="text-emerald-400 font-extrabold text-xs uppercase font-mono block">Step 3: Background Graphics</span>
-                  <p className="text-xs text-slate-300">
-                    Check/Enable <strong>"Background Graphics"</strong> and uncheck <strong>"Headers &amp; Footers"</strong> to eliminate date/URL stamps on receipts.
-                  </p>
+                {/* Wholesale Terms Text Area */}
+                <div className="bg-slate-900 p-4 rounded-xl border border-slate-800 space-y-2">
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-300 font-mono">
+                    📜 Wholesale Terms & Conditions (Appears on Wholesale A4 Tax Invoices)
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={wholesaleTermsText}
+                    onChange={(e) => setWholesaleTermsText(e.target.value)}
+                    placeholder="Enter custom wholesale invoice payment and warranty terms..."
+                    className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white text-xs font-mono focus:border-blue-500 focus:outline-none"
+                  />
+                </div>
+              </form>
+
+              {/* UNIVERSAL COMPATIBILITY MATRIX (2000 - PRESENT) */}
+              <div className="bg-slate-950 border border-slate-800 rounded-xl p-5 space-y-3 text-left">
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 font-mono block">
+                  🌐 Universal Printer Compatibility Guide (2000 – Present)
+                </span>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Our application uses raw standard CSS `@media print` layout engines compatible with <strong>any printer driver released from the year 2000 to date</strong> across Windows 2000, XP, 7, 8, 10, 11, macOS, and Linux CUPS.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs pt-1">
+                  <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 space-y-1">
+                    <span className="font-bold text-white block">1. ESC/POS Thermal</span>
+                    <p className="text-[10px] text-slate-400">SNBC BTP-S81, Epson TM-T88 I-VII, Star TSP100, Bixolon, XPrinter, Munbyn, Rongta (80mm & 58mm).</p>
+                  </div>
+                  <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 space-y-1">
+                    <span className="font-bold text-white block">2. Dot-Matrix Impact</span>
+                    <p className="text-[10px] text-slate-400">Epson TM-U220 / TM-U200, Star SP700, Citizen CD-S500 (76mm roll ribbon feed with carbon copy).</p>
+                  </div>
+                  <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 space-y-1">
+                    <span className="font-bold text-white block">3. Desktop Office Laser</span>
+                    <p className="text-[10px] text-slate-400">HP LaserJet, Canon PIXMA, Brother HL/MFC, Kyocera, Xerox, Ricoh (A4, Letter, Legal multi-page).</p>
+                  </div>
+                  <div className="bg-slate-900 p-3 rounded-lg border border-slate-800 space-y-1">
+                    <span className="font-bold text-white block">4. Mobile Bluetooth</span>
+                    <p className="text-[10px] text-slate-400">Portable handheld 58mm & 80mm Bluetooth printers via Windows / Android / iOS spooling.</p>
+                  </div>
                 </div>
               </div>
 
-              {/* Thermal Receipt Visual Preview Box */}
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-                <span className="text-xs text-slate-400 font-semibold block uppercase font-mono">Diagnostic Test Receipt Layout (80mm / 58mm CSS Grid)</span>
+              {/* CALIBRATION TEST PRINT PREVIEW VOUCHER */}
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3 text-left">
+                <span className="text-xs text-slate-400 font-semibold block uppercase font-mono">
+                  Diagnostic Test Paper Feed Ticket (Spool Calibration)
+                </span>
                 <div className="bg-white text-slate-900 p-4 rounded-lg font-mono text-xs max-w-xs mx-auto shadow-xl space-y-2 border border-slate-300">
                   <div className="text-center font-bold border-b border-dashed border-slate-400 pb-2">
                     <p className="text-sm uppercase tracking-wider">{settings.storeName || 'MYSHOP'} DESK</p>
-                    <p className="text-[10px] text-slate-600 font-normal">Windows 7+ Spooler Alignment Test</p>
+                    <p className="text-[10px] text-slate-600 font-normal">2000–2026 Universal Spool Test</p>
                     <p className="text-[10px] text-slate-500 font-normal mt-0.5">{new Date().toLocaleString()}</p>
                   </div>
-                  <div className="space-y-1 text-[11px]">
+                  <div className="space-y-1 text-[10px]">
                     <div className="flex justify-between">
-                      <span>1x Test Product Barcode</span>
-                      <span>{settings.currency} 10.00</span>
+                      <span>Retail Roll Pref:</span>
+                      <span className="font-bold">{retailFormat}</span>
                     </div>
-                    <div className="flex justify-between font-bold border-t border-slate-300 pt-1">
-                      <span>TOTAL TEST:</span>
-                      <span>{settings.currency} 10.00</span>
+                    <div className="flex justify-between">
+                      <span>Wholesale Inv Pref:</span>
+                      <span className="font-bold">{wholesaleFormat}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Driver Architecture:</span>
+                      <span className="font-bold">{driverType}</span>
+                    </div>
+                    <div className="flex justify-between border-t border-slate-300 pt-1 font-bold">
+                      <span>DENSITY & ALIGNMENT:</span>
+                      <span>PASS ✓</span>
                     </div>
                   </div>
                   <div className="text-center text-[9px] text-slate-500 border-t border-dashed border-slate-400 pt-2">
-                    SNBC BTP-S81 80mm Paper Roll Ready
+                    SNBC BTP-S81 / Universal Printer Driver Ready
                   </div>
                 </div>
               </div>

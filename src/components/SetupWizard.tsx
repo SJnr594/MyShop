@@ -208,12 +208,40 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                   />
                 </div>
 
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-emerald-400 mb-1">🛍️ Retail Receipt Format</label>
+                    <select
+                      value={settings.retailReceiptFormat || '80mm'}
+                      onChange={(e) => updateSettingField('retailReceiptFormat', e.target.value)}
+                      className="w-full text-xs bg-slate-900 border border-slate-800 rounded-lg p-2 text-white focus:outline-none focus:border-blue-500 font-mono"
+                    >
+                      <option value="80mm">80mm Coated Thermal Roll</option>
+                      <option value="58mm">58mm Mobile Bluetooth Roll</option>
+                      <option value="A4">A4 Slip Sheet</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-purple-400 mb-1">📦 Wholesale Receipt Format</label>
+                    <select
+                      value={settings.wholesaleReceiptFormat || 'A4'}
+                      onChange={(e) => updateSettingField('wholesaleReceiptFormat', e.target.value)}
+                      className="w-full text-xs bg-slate-900 border border-slate-800 rounded-lg p-2 text-white focus:outline-none focus:border-blue-500 font-mono"
+                    >
+                      <option value="A4">A4 Corporate Tax Invoice</option>
+                      <option value="80mm">80mm Detailed Thermal Roll</option>
+                      <option value="Letter">US Letter Full Document</option>
+                    </select>
+                  </div>
+                </div>
+
                 <div>
                   <label className="block text-xs font-medium text-slate-400 mb-1">Receipt Header Notice</label>
                   <textarea
                     value={settings.receiptHeader}
                     onChange={(e) => updateSettingField('receiptHeader', e.target.value)}
-                    className="w-full text-xs bg-slate-900 border border-slate-800 rounded-lg p-2 text-white focus:outline-none focus:border-blue-500 h-16 font-mono"
+                    className="w-full text-xs bg-slate-900 border border-slate-800 rounded-lg p-2 text-white focus:outline-none focus:border-blue-500 h-14 font-mono"
                     id="wizard-store-receipt-header"
                   />
                 </div>
@@ -223,7 +251,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                   <textarea
                     value={settings.receiptFooter}
                     onChange={(e) => updateSettingField('receiptFooter', e.target.value)}
-                    className="w-full text-xs bg-slate-900 border border-slate-800 rounded-lg p-2 text-white focus:outline-none focus:border-blue-500 h-16 font-mono"
+                    className="w-full text-xs bg-slate-900 border border-slate-800 rounded-lg p-2 text-white focus:outline-none focus:border-blue-500 h-14 font-mono"
                     id="wizard-store-receipt-footer"
                   />
                 </div>

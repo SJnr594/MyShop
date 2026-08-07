@@ -1,0 +1,23 @@
+{
+  "short_name": "MyShop Desk",
+  "name": "MyShop Store Management Desk",
+  "description": "Desktop Store POS, Wholesale & Inventory Management Application",
+  "icons": [
+    {
+      "src": "pwa-icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "pwa-icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0f172a",
+  "theme_color": "#1e293b",
+  "display": "standalone",
+  "orientation": "any",
+  "scope": "/"
+}

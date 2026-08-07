@@ -10,6 +10,7 @@ import CreditsManager from './components/CreditsManager';
 import BrandLogo from './components/BrandLogo';
 import AppTutorial from './components/AppTutorial';
 import Win7DiagnosticsModal from './components/Win7DiagnosticsModal';
+import DesktopAppModal from './components/DesktopAppModal';
 import { useTheme } from './ThemeContext';
 import { 
   Store, ShoppingBag, Package, TrendingUp, Database, AlertCircle, Sparkles, HelpCircle,
@@ -49,6 +50,30 @@ export default function App() {
   const [showPWAHelp, setShowPWAHelp] = useState(false);
   const [showOfficeControlsHelp, setShowOfficeControlsHelp] = useState(false);
   const [showWin7Diagnostics, setShowWin7Diagnostics] = useState(false);
+
+  // PWA Native Desktop Install Event
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  }, []);
+
+  const handleTriggerPwaInstall = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+      }
+    } else {
+      setShowPWAHelp(true);
+    }
+  };
 
   // Global hotkeys for Alt+D (theme) and F10 (tab cycle)
   useEffect(() => {
@@ -618,6 +643,10 @@ export default function App() {
   };
 
   const handleDeleteSale = (saleId: string, restock: boolean = true) => {
+    if (activeProfile?.role === 'cashier') {
+      alert("🔒 Access Denied: Only Store Managers and System Administrators are authorized to void sales receipts.");
+      return;
+    }
     const saleToDelete = sales.find(s => s.id === saleId);
     if (!saleToDelete) return;
 
@@ -664,6 +693,10 @@ export default function App() {
   };
 
   const handleDeleteBulkSales = (saleIds: string[], restock: boolean = true) => {
+    if (activeProfile?.role === 'cashier') {
+      alert("🔒 Access Denied: Only Store Managers and System Administrators are authorized to void sales receipts.");
+      return;
+    }
     if (!saleIds || saleIds.length === 0) return;
 
     const salesToDelete = sales.filter(s => saleIds.includes(s.id));
@@ -1416,7 +1449,7 @@ export default function App() {
               { id: 'checkout', label: 'Cash Checkout', icon: ShoppingBag, allowed: ['admin', 'manager', 'cashier'] },
               { id: 'credits', label: 'Credit Ledger', icon: BookOpen, badge: activeUnpaidCreditsCount > 0 ? activeUnpaidCreditsCount : undefined, allowed: ['admin', 'manager', 'cashier'] },
               { id: 'inventory', label: 'Stock Room', icon: Package, badge: activeAlertsCount > 0 ? activeAlertsCount : undefined, allowed: ['admin', 'manager'] },
-              { id: 'analytics', label: 'Business Analytics', icon: TrendingUp, allowed: ['admin', 'manager'] },
+              { id: 'analytics', label: activeProfile?.role === 'cashier' ? 'Receipt Vault & Audit' : 'Business Analytics', icon: TrendingUp, allowed: ['admin', 'manager', 'cashier'] },
               { id: 'backups', label: 'Database Backups', icon: Database, allowed: ['admin', 'manager'] },
               { id: 'tutorial', label: 'Training Manual', icon: HelpCircle, allowed: ['admin', 'manager', 'cashier'] }
             ]
@@ -1564,7 +1597,7 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'analytics' && (activeProfile.role === 'admin' || activeProfile.role === 'manager') && (
+              {activeTab === 'analytics' && (
                 <AnalyticsPanel
                   sales={sales}
                   products={products}
@@ -1658,59 +1691,14 @@ export default function App() {
         </div>
       </div>
 
-      {/* 4. MODAL: STANDALONE DESKTOP PWA INSTALLATION GUIDE */}
-      {showPWAHelp && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xs flex items-center justify-center p-4 z-100 animate-fadeIn" id="pwa-help-modal">
-          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full shadow-2xl p-6 relative animate-scaleUp">
-            <button 
-              onClick={() => setShowPWAHelp(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 font-bold p-1 hover:bg-slate-100 rounded-lg transition-all"
-              type="button"
-            >
-              ✕
-            </button>
-            <div className="flex items-center space-x-3 mb-4 border-b border-slate-100 pb-3">
-              <div className="p-2.5 bg-blue-100 text-blue-600 rounded-xl">
-                <Laptop className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-900 text-sm">Execute like Microsoft Office</h3>
-                <p className="text-[10px] text-slate-500">Run MyShop POS as a native desktop program</p>
-              </div>
-            </div>
-            
-            <div className="space-y-4 text-xs text-slate-600 leading-relaxed font-medium">
-              <p>
-                To launch this POS app directly from your computer dock or start menu without opening a browser:
-              </p>
-              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/60 font-sans space-y-2.5">
-                <div className="flex items-start space-x-2">
-                  <span className="bg-blue-100 text-blue-800 font-bold px-1.5 py-0.2 rounded text-[10px] shrink-0 mt-0.5">Step 1</span>
-                  <span>Look at your browser's top search bar (URL input block).</span>
-                </div>
-                <div className="flex items-start space-x-2">
-                  <span className="bg-blue-100 text-blue-800 font-bold px-1.5 py-0.2 rounded text-[10px] shrink-0 mt-0.5">Step 2</span>
-                  <span>Click the <strong>"Install MyShop POS"</strong> icon (displays as a screen with an arrow, or click Chrome settings <strong className="text-slate-800">⋮ &rarr; Save and share &rarr; Install page</strong>).</span>
-                </div>
-                <div className="flex items-start space-x-2">
-                  <span className="bg-blue-100 text-blue-800 font-bold px-1.5 py-0.2 rounded text-[10px] shrink-0 mt-0.5">Step 3</span>
-                  <span>Pin the app to your desktop or Dock. It opens as an independent, standalone executable window without browser navigation clutter!</span>
-                </div>
-              </div>
-              <p className="text-[10px] text-slate-400">
-                * This runs fully offline-first. Your inventory catalogs, checkout histories, and user settings are kept completely secure in your hard drive's browser sandbox cache.
-              </p>
-            </div>
-            <button 
-              onClick={() => setShowPWAHelp(false)}
-              className="mt-5 w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs transition-all cursor-pointer"
-              type="button"
-            >
-              Excellent, I understand
-            </button>
-          </div>
-        </div>
-      )}
+      {/* 4. MODAL: STANDALONE DESKTOP APPLICATION SETUP */}
+      <DesktopAppModal
+        isOpen={showPWAHelp}
+        onClose={() => setShowPWAHelp(false)}
+        settings={settings}
+        deferredPrompt={deferredPrompt}
+        onTriggerPwaInstall={handleTriggerPwaInstall}
+      />
 
       {/* 5. MODAL: OFFICE CONTROLS HELP (UNDO/REDO) */}
       {showOfficeControlsHelp && (
@@ -1748,6 +1736,7 @@ export default function App() {
         <Win7DiagnosticsModal
           onClose={() => setShowWin7Diagnostics(false)}
           settings={settings}
+          onUpdateSettings={handleUpdateSettings}
         />
       )}
 

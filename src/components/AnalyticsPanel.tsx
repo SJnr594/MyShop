@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Sale, Product, VoidedSaleRecord } from '../types';
+import MonthlyPdfReportModal from './MonthlyPdfReportModal';
 import { 
   TrendingUp, 
   Users, 
@@ -21,6 +22,7 @@ import {
   Trash2,
   X,
   Check,
+  CheckCircle2,
   Plus,
   Minus,
   Save,
@@ -32,7 +34,8 @@ import {
   ChevronRight,
   ChevronDown,
   Layers,
-  History
+  History,
+  FileText
 } from 'lucide-react';
 
 interface AnalyticsPanelProps {
@@ -60,8 +63,12 @@ export default function AnalyticsPanel({
   onRestoreBulkSales, 
   activeProfile 
 }: AnalyticsPanelProps) {
-  const [activeSubTab, setActiveSubTab] = useState<'insights' | 'receipts'>('insights');
+  const isAdminOrManager = activeProfile?.role === 'admin' || activeProfile?.role === 'manager';
+
+  const [activeSubTab, setActiveSubTab] = useState<'insights' | 'receipts'>(activeProfile?.role === 'cashier' ? 'receipts' : 'insights');
   const [timeframe, setTimeframe] = useState<'all' | 'today' | 'week' | 'month'>('all');
+  const [showMonthlyPdfModal, setShowMonthlyPdfModal] = useState(false);
+  const [selectedMonthPdfKey, setSelectedMonthPdfKey] = useState<string | undefined>(undefined);
   
   // Receipt vault & Audit Batch state
   const [receiptVaultTab, setReceiptVaultTab] = useState<'active' | 'void_bin'>('active');
@@ -69,7 +76,45 @@ export default function AnalyticsPanel({
   const [auditSearch, setAuditSearch] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('all');
   const [cashierFilter, setCashierFilter] = useState('all');
+  const [receiptSortOrder, setReceiptSortOrder] = useState<'value_desc' | 'value_asc' | 'time_desc' | 'time_asc'>('value_desc');
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+
+  // Cross-check & finalization states
+  const [checklistItemsMatch, setChecklistItemsMatch] = useState(false);
+  const [checklistPaymentConfirmed, setChecklistPaymentConfirmed] = useState(false);
+  const [crossCheckNotesInput, setCrossCheckNotesInput] = useState('');
+
+  useEffect(() => {
+    if (activeProfile?.role === 'cashier') {
+      setActiveSubTab('receipts');
+    }
+  }, [activeProfile?.role]);
+
+  useEffect(() => {
+    if (selectedSale) {
+      setChecklistItemsMatch(selectedSale.isFinalized || false);
+      setChecklistPaymentConfirmed(selectedSale.isFinalized || false);
+      setCrossCheckNotesInput(selectedSale.crossCheckNotes || '');
+    } else {
+      setChecklistItemsMatch(false);
+      setChecklistPaymentConfirmed(false);
+      setCrossCheckNotesInput('');
+    }
+  }, [selectedSale?.id]);
+
+  const handleFinalizeReceipt = () => {
+    if (!selectedSale || !onUpdateSale) return;
+    const updated: Sale = {
+      ...selectedSale,
+      isFinalized: true,
+      checkedBy: activeProfile?.name || 'Cashier',
+      checkedTimestamp: Date.now(),
+      crossCheckNotes: crossCheckNotesInput.trim() || undefined
+    };
+    onUpdateSale(updated);
+    setSelectedSale(updated);
+    alert(`Receipt #${selectedSale.id} has been cross-checked and stamped as Finalized by ${activeProfile?.name || 'Cashier'}.`);
+  };
 
   // Hierarchy accordion state
   const [expandedMonths, setExpandedMonths] = useState<string[]>([]);
@@ -307,22 +352,30 @@ export default function AnalyticsPanel({
   )).sort();
 
   // 2. Receipt Vault Search & Filtering
-  const matchingReceipts = sales.filter(s => {
-    // Search query matches Receipt ID, Customer Name, Customer Phone, Cashier, or contains product names
-    const q = auditSearch.toLowerCase().trim();
-    const matchesQuery = !q ? true : (
-      s.id.toLowerCase().includes(q) ||
-      s.customerName.toLowerCase().includes(q) ||
-      s.customerPhone.toLowerCase().includes(q) ||
-      (s.cashierName && s.cashierName.toLowerCase().includes(q)) ||
-      s.items.some(item => item.productName.toLowerCase().includes(q))
-    );
+  const matchingReceipts = useMemo(() => {
+    return sales.filter(s => {
+      // Search query matches Receipt ID, Customer Name, Customer Phone, Cashier, or contains product names
+      const q = auditSearch.toLowerCase().trim();
+      const matchesQuery = !q ? true : (
+        s.id.toLowerCase().includes(q) ||
+        s.customerName.toLowerCase().includes(q) ||
+        s.customerPhone.toLowerCase().includes(q) ||
+        (s.cashierName && s.cashierName.toLowerCase().includes(q)) ||
+        s.items.some(item => item.productName.toLowerCase().includes(q))
+      );
 
-    const matchesPayment = paymentFilter === 'all' ? true : s.paymentMethod === paymentFilter;
-    const matchesCashier = cashierFilter === 'all' ? true : (s.cashierName === cashierFilter);
+      const matchesPayment = paymentFilter === 'all' ? true : s.paymentMethod === paymentFilter;
+      const matchesCashier = cashierFilter === 'all' ? true : (s.cashierName === cashierFilter);
 
-    return matchesQuery && matchesPayment && matchesCashier;
-  }).sort((a, b) => b.timestamp - a.timestamp); // Sort by newest first
+      return matchesQuery && matchesPayment && matchesCashier;
+    }).sort((a, b) => {
+      if (receiptSortOrder === 'value_desc') return b.total - a.total;
+      if (receiptSortOrder === 'value_asc') return a.total - b.total;
+      if (receiptSortOrder === 'time_desc') return b.timestamp - a.timestamp;
+      if (receiptSortOrder === 'time_asc') return a.timestamp - b.timestamp;
+      return b.total - a.total;
+    });
+  }, [sales, auditSearch, paymentFilter, cashierFilter, receiptSortOrder]);
 
   // Date Helpers for Month -> Week -> Day grouping
   const getMonthKey = (ts: number) => {
@@ -451,10 +504,19 @@ export default function AnalyticsPanel({
       ...m,
       weeks: Array.from(m.weeks.values()).map(w => ({
         ...w,
-        days: Array.from(w.days.values()).sort((a,b) => b.dayKey.localeCompare(a.dayKey))
+        days: Array.from(w.days.values()).map(d => ({
+          ...d,
+          sales: [...d.sales].sort((a, b) => {
+            if (receiptSortOrder === 'value_desc') return b.total - a.total;
+            if (receiptSortOrder === 'value_asc') return a.total - b.total;
+            if (receiptSortOrder === 'time_desc') return b.timestamp - a.timestamp;
+            if (receiptSortOrder === 'time_asc') return a.timestamp - b.timestamp;
+            return b.total - a.total;
+          })
+        })).sort((a,b) => b.dayKey.localeCompare(a.dayKey))
       })).sort((a,b) => b.weekKey.localeCompare(a.weekKey))
     })).sort((a,b) => b.monthKey.localeCompare(a.monthKey));
-  }, [matchingReceipts]);
+  }, [matchingReceipts, receiptSortOrder]);
 
   useEffect(() => {
     if (groupedSalesTree.length > 0 && expandedMonths.length === 0) {
@@ -479,6 +541,10 @@ export default function AnalyticsPanel({
 
   const handleTriggerPeriodBulkVoid = (saleIds: string[], e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    if (!isAdminOrManager) {
+      alert("🔒 Access Denied: Only Store Managers and System Administrators are authorized to void sales receipts.");
+      return;
+    }
     if (!saleIds || saleIds.length === 0) return;
     setSelectedSaleIds(saleIds);
     setShowBulkConfirmModal(true);
@@ -532,6 +598,10 @@ export default function AnalyticsPanel({
   };
 
   const handleConfirmBulkDelete = () => {
+    if (!isAdminOrManager) {
+      alert("🔒 Access Denied: Only Store Managers and System Administrators are authorized to void sales receipts.");
+      return;
+    }
     if (selectedSaleIds.length === 0) return;
     const count = selectedSaleIds.length;
     if (onDeleteBulkSales) {
@@ -575,6 +645,41 @@ export default function AnalyticsPanel({
     document.head.removeChild(style);
   };
 
+  const handleExportReceiptVaultCsv = () => {
+    if (matchingReceipts.length === 0) {
+      alert("No active receipts found to export.");
+      return;
+    }
+
+    const headers = ["Receipt ID", "Date", "Time", "Customer Name", "Customer Phone", "Cashier", "Payment Method", "Items Count", "Total Amount"];
+    const rows = matchingReceipts.map(s => {
+      const d = new Date(s.timestamp);
+      const dateStr = d.toLocaleDateString();
+      const timeStr = d.toLocaleTimeString();
+      const totalItems = s.items.reduce((acc, i) => acc + i.quantity, 0);
+      return [
+        `"${s.id}"`,
+        `"${dateStr}"`,
+        `"${timeStr}"`,
+        `"${(s.customerName || 'Walk-in Customer').replace(/"/g, '""')}"`,
+        `"${(s.customerPhone || '').replace(/"/g, '""')}"`,
+        `"${(s.cashierName || 'Store Operator').replace(/"/g, '""')}"`,
+        `"${s.paymentMethod}"`,
+        totalItems,
+        s.total.toFixed(2)
+      ];
+    });
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `MyShop_Receipt_Vault_ActiveReceipts_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="space-y-6 animate-fadeIn" id="analytics-panel-view">
       
@@ -590,114 +695,128 @@ export default function AnalyticsPanel({
           </div>
         </div>
 
-        {/* Primary Sub-tab Selectors */}
-        <div className="flex bg-slate-100 p-1 rounded-xl self-start md:self-auto">
-          <button
-            onClick={() => setActiveSubTab('insights')}
-            className={`flex items-center space-x-1.5 text-xs px-4 py-2 font-bold rounded-lg transition-all ${
-              activeSubTab === 'insights' 
-                ? 'bg-white text-slate-900 shadow-xs' 
-                : 'text-slate-500 hover:text-slate-900'
-            }`}
-          >
-            <TrendingUp className="w-4 h-4" />
-            <span>Store Performance</span>
-          </button>
+        {/* Primary Sub-tab Selectors & PDF Report Button */}
+        <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
           <button
             onClick={() => {
-              setActiveSubTab('receipts');
-              if (sales.length > 0 && !selectedSale) {
-                setSelectedSale(sales[sales.length - 1]); // default to newest
-              }
+              setSelectedMonthPdfKey(undefined);
+              setShowMonthlyPdfModal(true);
             }}
-            className={`flex items-center space-x-1.5 text-xs px-4 py-2 font-bold rounded-lg transition-all ${
-              activeSubTab === 'receipts' 
-                ? 'bg-white text-slate-900 shadow-xs' 
-                : 'text-slate-500 hover:text-slate-900'
-            }`}
+            className="flex items-center space-x-1.5 text-xs px-3.5 py-2 font-extrabold text-white bg-blue-600 hover:bg-blue-500 rounded-xl shadow-sm transition-all cursor-pointer"
+            type="button"
           >
-            <Receipt className="w-4 h-4" />
-            <span>Receipt Vault & Audit</span>
-            {sales.length > 0 && (
-              <span className="bg-blue-600 text-white font-mono text-[9px] px-1.5 py-0.5 rounded-full font-black">
-                {sales.length}
-              </span>
-            )}
+            <FileText className="w-4 h-4" />
+            <span>Export Monthly PDF Report</span>
           </button>
+
+          <div className="flex bg-slate-100 p-1 rounded-xl">
+            <button
+              onClick={() => setActiveSubTab('insights')}
+              className={`flex items-center space-x-1.5 text-xs px-4 py-2 font-bold rounded-lg transition-all ${
+                activeSubTab === 'insights' 
+                  ? 'bg-white text-slate-900 shadow-xs' 
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <TrendingUp className="w-4 h-4" />
+              <span>Store Performance</span>
+            </button>
+            <button
+              onClick={() => {
+                setActiveSubTab('receipts');
+                if (sales.length > 0 && !selectedSale) {
+                  setSelectedSale(sales[sales.length - 1]); // default to newest
+                }
+              }}
+              className={`flex items-center space-x-1.5 text-xs px-4 py-2 font-bold rounded-lg transition-all ${
+                activeSubTab === 'receipts' 
+                  ? 'bg-white text-slate-900 shadow-xs' 
+                  : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              <Receipt className="w-4 h-4" />
+              <span>Receipt Vault & Audit</span>
+              {sales.length > 0 && (
+                <span className="bg-blue-600 text-white font-mono text-[9px] px-1.5 py-0.5 rounded-full font-black">
+                  {sales.length}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
       {/* COMPARATIVE DAILY, WEEKLY, MONTHLY SALES STRIP (Always Visible for fast tracking) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" id="comparative-sales-dashboard">
         {/* Today */}
-        <div className="bg-gradient-to-br from-white to-slate-50/50 border border-slate-200/60 p-4 rounded-xl shadow-xs relative overflow-hidden group hover:border-blue-300/60 transition-all">
+        <div className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-800/90 dark:to-slate-900/90 border border-slate-200/60 dark:border-slate-700/80 p-4 rounded-xl shadow-xs relative overflow-hidden group hover:border-blue-300/60 transition-all">
           <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
           <div className="flex justify-between items-start">
             <div>
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Today's Sales (Daily)</span>
-              <h4 className="text-lg font-bold font-mono text-slate-900 mt-1">{currency}{revenueToday.toFixed(2)}</h4>
+              <span className="text-[10px] text-slate-400 dark:text-slate-400 font-bold uppercase tracking-wider block">Today's Sales (Daily)</span>
+              <h4 className="text-lg font-bold font-mono text-slate-900 dark:text-slate-100 mt-1">{currency}{revenueToday.toFixed(2)}</h4>
             </div>
-            <span className="bg-blue-50 text-blue-700 text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase font-mono">
+            <span className="bg-blue-50 dark:bg-blue-950/80 text-blue-700 dark:text-blue-300 text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase font-mono border dark:border-blue-800/60">
               Today
             </span>
           </div>
-          <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-slate-100 text-[10px]">
-            <span className="text-slate-500">Profit Margin: <strong className="text-emerald-600 font-bold font-mono">{currency}{profitToday.toFixed(2)}</strong></span>
-            <span className="bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded font-mono">{salesToday.length} invoices</span>
+          <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-700/60 text-[10px]">
+            <span className="text-slate-500 dark:text-slate-400">Profit Margin: <strong className="text-emerald-600 dark:text-emerald-400 font-bold font-mono">{currency}{profitToday.toFixed(2)}</strong></span>
+            <span className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold px-1.5 py-0.5 rounded font-mono border dark:border-slate-700/60">{salesToday.length} invoices</span>
           </div>
         </div>
 
         {/* This Week */}
-        <div className="bg-gradient-to-br from-white to-slate-50/50 border border-slate-200/60 p-4 rounded-xl shadow-xs relative overflow-hidden group hover:border-emerald-300/60 transition-all">
+        <div className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-800/90 dark:to-slate-900/90 border border-slate-200/60 dark:border-slate-700/80 p-4 rounded-xl shadow-xs relative overflow-hidden group hover:border-emerald-300/60 transition-all">
           <div className="absolute top-0 left-0 w-1 h-full bg-emerald-500"></div>
           <div className="flex justify-between items-start">
             <div>
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Last 7 Days (Weekly)</span>
-              <h4 className="text-lg font-bold font-mono text-slate-900 mt-1">{currency}{revenueWeek.toFixed(2)}</h4>
+              <span className="text-[10px] text-slate-400 dark:text-slate-400 font-bold uppercase tracking-wider block">Last 7 Days (Weekly)</span>
+              <h4 className="text-lg font-bold font-mono text-slate-900 dark:text-slate-100 mt-1">{currency}{revenueWeek.toFixed(2)}</h4>
             </div>
-            <span className="bg-emerald-50 text-emerald-700 text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase font-mono">
+            <span className="bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase font-mono border dark:border-emerald-800/60">
               7 Days
             </span>
           </div>
-          <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-slate-100 text-[10px]">
-            <span className="text-slate-500">Profit Margin: <strong className="text-emerald-600 font-bold font-mono">{currency}{profitWeek.toFixed(2)}</strong></span>
-            <span className="bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded font-mono">{salesWeek.length} invoices</span>
+          <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-700/60 text-[10px]">
+            <span className="text-slate-500 dark:text-slate-400">Profit Margin: <strong className="text-emerald-600 dark:text-emerald-400 font-bold font-mono">{currency}{profitWeek.toFixed(2)}</strong></span>
+            <span className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold px-1.5 py-0.5 rounded font-mono border dark:border-slate-700/60">{salesWeek.length} invoices</span>
           </div>
         </div>
 
         {/* This Month */}
-        <div className="bg-gradient-to-br from-white to-slate-50/50 border border-slate-200/60 p-4 rounded-xl shadow-xs relative overflow-hidden group hover:border-amber-300/60 transition-all">
+        <div className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-800/90 dark:to-slate-900/90 border border-slate-200/60 dark:border-slate-700/80 p-4 rounded-xl shadow-xs relative overflow-hidden group hover:border-amber-300/60 transition-all">
           <div className="absolute top-0 left-0 w-1 h-full bg-amber-500"></div>
           <div className="flex justify-between items-start">
             <div>
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">This Month (Monthly)</span>
-              <h4 className="text-lg font-bold font-mono text-slate-900 mt-1">{currency}{revenueMonth.toFixed(2)}</h4>
+              <span className="text-[10px] text-slate-400 dark:text-slate-400 font-bold uppercase tracking-wider block">This Month (Monthly)</span>
+              <h4 className="text-lg font-bold font-mono text-slate-900 dark:text-slate-100 mt-1">{currency}{revenueMonth.toFixed(2)}</h4>
             </div>
-            <span className="bg-amber-50 text-amber-700 text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase font-mono">
+            <span className="bg-amber-50 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase font-mono border dark:border-amber-800/60">
               Month
             </span>
           </div>
-          <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-slate-100 text-[10px]">
-            <span className="text-slate-500">Profit Margin: <strong className="text-emerald-600 font-bold font-mono">{currency}{profitMonth.toFixed(2)}</strong></span>
-            <span className="bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded font-mono">{salesMonth.length} invoices</span>
+          <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-700/60 text-[10px]">
+            <span className="text-slate-500 dark:text-slate-400">Profit Margin: <strong className="text-emerald-600 dark:text-emerald-400 font-bold font-mono">{currency}{profitMonth.toFixed(2)}</strong></span>
+            <span className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold px-1.5 py-0.5 rounded font-mono border dark:border-slate-700/60">{salesMonth.length} invoices</span>
           </div>
         </div>
 
         {/* All-time */}
-        <div className="bg-gradient-to-br from-white to-slate-50/50 border border-slate-200/60 p-4 rounded-xl shadow-xs relative overflow-hidden group hover:border-purple-300/60 transition-all">
+        <div className="bg-gradient-to-br from-white to-slate-50/50 dark:from-slate-800/90 dark:to-slate-900/90 border border-slate-200/60 dark:border-slate-700/80 p-4 rounded-xl shadow-xs relative overflow-hidden group hover:border-purple-300/60 transition-all">
           <div className="absolute top-0 left-0 w-1 h-full bg-purple-500"></div>
           <div className="flex justify-between items-start">
             <div>
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">All-Time Cumulative</span>
-              <h4 className="text-lg font-bold font-mono text-slate-900 mt-1">{currency}{revenueAll.toFixed(2)}</h4>
+              <span className="text-[10px] text-slate-400 dark:text-slate-400 font-bold uppercase tracking-wider block">All-Time Cumulative</span>
+              <h4 className="text-lg font-bold font-mono text-slate-900 dark:text-slate-100 mt-1">{currency}{revenueAll.toFixed(2)}</h4>
             </div>
-            <span className="bg-purple-50 text-purple-700 text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase font-mono">
+            <span className="bg-purple-50 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 text-[10px] font-extrabold px-2 py-0.5 rounded-md uppercase font-mono border dark:border-purple-800/60">
               All-Time
             </span>
           </div>
-          <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-slate-100 text-[10px]">
-            <span className="text-slate-500">Profit Margin: <strong className="text-emerald-600 font-bold font-mono">{currency}{profitAll.toFixed(2)}</strong></span>
-            <span className="bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded font-mono">{sales.length} invoices</span>
+          <div className="flex justify-between items-center mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-700/60 text-[10px]">
+            <span className="text-slate-500 dark:text-slate-400">Profit Margin: <strong className="text-emerald-600 dark:text-emerald-400 font-bold font-mono">{currency}{profitAll.toFixed(2)}</strong></span>
+            <span className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold px-1.5 py-0.5 rounded font-mono border dark:border-slate-700/60">{sales.length} invoices</span>
           </div>
         </div>
       </div>
@@ -955,7 +1074,7 @@ export default function AnalyticsPanel({
             </div>
 
             {receiptVaultTab === 'active' && (
-              <div className="flex items-center space-x-2 bg-slate-100 p-1 rounded-lg text-xs font-medium">
+              <div className="flex flex-wrap items-center gap-2 bg-slate-100 p-1 rounded-lg text-xs font-medium">
                 <button
                   type="button"
                   onClick={() => setVaultViewMode('hierarchy')}
@@ -975,6 +1094,15 @@ export default function AnalyticsPanel({
                 >
                   <Filter className="w-3.5 h-3.5 text-slate-500" />
                   <span>Flat List View</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportReceiptVaultCsv}
+                  className="px-3 py-1 rounded-md bg-emerald-700 hover:bg-emerald-600 text-white transition-all flex items-center space-x-1.5 text-[11px] font-extrabold cursor-pointer shadow-xs ml-auto"
+                  title="Export Active Receipts as CSV (Voided Receipts Excluded)"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Export Active Ledger (CSV)</span>
                 </button>
               </div>
             )}
@@ -1002,7 +1130,7 @@ export default function AnalyticsPanel({
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
                     {/* Cashier Filter Select */}
                     <div>
                       <label className="text-slate-400 font-medium text-[10px] block mb-1">Filter Cashier:</label>
@@ -1033,6 +1161,21 @@ export default function AnalyticsPanel({
                         <option value="card">Credit/Debit Card</option>
                         <option value="mobile_money">Mobile Transfer</option>
                         <option value="credit">Store Credit</option>
+                      </select>
+                    </div>
+
+                    {/* Sort Receipts per Day Select */}
+                    <div>
+                      <label className="text-blue-700 font-extrabold text-[10px] block mb-1">Sort Daily Receipts:</label>
+                      <select
+                        value={receiptSortOrder}
+                        onChange={(e) => setReceiptSortOrder(e.target.value as any)}
+                        className="bg-blue-50/80 border border-blue-300 rounded-lg p-1.5 text-xs text-blue-900 font-bold w-full focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                      >
+                        <option value="value_desc">💎 Highest Value First</option>
+                        <option value="value_asc">🪙 Lowest Value First</option>
+                        <option value="time_desc">🕒 Time: Newest First</option>
+                        <option value="time_asc">⏳ Time: Oldest First</option>
                       </select>
                     </div>
                   </div>
@@ -1125,16 +1268,33 @@ export default function AnalyticsPanel({
                                     {currency}{mGroup.totalRevenue.toFixed(2)}
                                   </span>
 
-                                  {/* Bulk Void Month Button */}
+                                  {/* Export Month PDF Button */}
                                   <button
-                                    onClick={(e) => handleTriggerPeriodBulkVoid(mGroup.saleIds, e)}
-                                    className="p-1 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-lg text-[10px] font-bold flex items-center space-x-1 border border-rose-200 transition-all cursor-pointer"
-                                    title={`Bulk void all ${mGroup.salesCount} receipts for ${mGroup.monthLabel}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedMonthPdfKey(mGroup.monthKey);
+                                      setShowMonthlyPdfModal(true);
+                                    }}
+                                    className="p-1 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-[10px] font-bold flex items-center space-x-1 border border-blue-200 transition-all cursor-pointer"
+                                    title={`Export ${mGroup.monthLabel} Sales PDF Report`}
                                     type="button"
                                   >
-                                    <Trash2 className="w-3 h-3" />
-                                    <span className="hidden sm:inline">Void Month</span>
+                                    <FileText className="w-3 h-3" />
+                                    <span className="hidden sm:inline">Export PDF</span>
                                   </button>
+
+                                  {/* Bulk Void Month Button */}
+                                  {isAdminOrManager && (
+                                    <button
+                                      onClick={(e) => handleTriggerPeriodBulkVoid(mGroup.saleIds, e)}
+                                      className="p-1 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-lg text-[10px] font-bold flex items-center space-x-1 border border-rose-200 transition-all cursor-pointer"
+                                      title={`Bulk void all ${mGroup.salesCount} receipts for ${mGroup.monthLabel}`}
+                                      type="button"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                      <span className="hidden sm:inline">Void Month</span>
+                                    </button>
+                                  )}
                                 </div>
                               </div>
 
@@ -1170,15 +1330,17 @@ export default function AnalyticsPanel({
                                             </span>
 
                                             {/* Bulk Void Week Button */}
-                                            <button
-                                              onClick={(e) => handleTriggerPeriodBulkVoid(wGroup.saleIds, e)}
-                                              className="p-1 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded text-[9px] font-bold flex items-center space-x-1 border border-rose-200 cursor-pointer"
-                                              title={`Bulk void all ${wGroup.salesCount} receipts for ${wGroup.weekLabel}`}
-                                              type="button"
-                                            >
-                                              <Trash2 className="w-2.5 h-2.5" />
-                                              <span>Void Week</span>
-                                            </button>
+                                            {isAdminOrManager && (
+                                              <button
+                                                onClick={(e) => handleTriggerPeriodBulkVoid(wGroup.saleIds, e)}
+                                                className="p-1 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded text-[9px] font-bold flex items-center space-x-1 border border-rose-200 cursor-pointer"
+                                                title={`Bulk void all ${wGroup.salesCount} receipts for ${wGroup.weekLabel}`}
+                                                type="button"
+                                              >
+                                                <Trash2 className="w-2.5 h-2.5" />
+                                                <span>Void Week</span>
+                                              </button>
+                                            )}
                                           </div>
                                         </div>
 
@@ -1213,21 +1375,32 @@ export default function AnalyticsPanel({
                                                       </span>
 
                                                       {/* Bulk Void Day Button */}
-                                                      <button
-                                                        onClick={(e) => handleTriggerPeriodBulkVoid(dGroup.saleIds, e)}
-                                                        className="px-1.5 py-0.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded text-[9px] font-bold flex items-center space-x-1 border border-rose-200 cursor-pointer"
-                                                        title={`Bulk void all ${dGroup.salesCount} receipts for ${dGroup.dayLabel}`}
-                                                        type="button"
-                                                      >
-                                                        <Trash2 className="w-2.5 h-2.5" />
-                                                        <span>Void Day</span>
-                                                      </button>
+                                                      {isAdminOrManager && (
+                                                        <button
+                                                          onClick={(e) => handleTriggerPeriodBulkVoid(dGroup.saleIds, e)}
+                                                          className="px-1.5 py-0.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded text-[9px] font-bold flex items-center space-x-1 border border-rose-200 cursor-pointer"
+                                                          title={`Bulk void all ${dGroup.salesCount} receipts for ${dGroup.dayLabel}`}
+                                                          type="button"
+                                                        >
+                                                          <Trash2 className="w-2.5 h-2.5" />
+                                                          <span>Void Day</span>
+                                                        </button>
+                                                      )}
                                                     </div>
                                                   </div>
 
                                                   {/* Display individual sales on this day if day is active */}
                                                   {isDayActive && (
                                                     <div className="pl-3 border-l-2 border-l-blue-500 space-y-1.5 my-1.5 animate-fadeIn">
+                                                      <div className="flex items-center justify-between text-[9px] text-blue-700 font-extrabold uppercase tracking-wider pb-0.5 border-b border-slate-100">
+                                                        <span>Sorted by {
+                                                          receiptSortOrder === 'value_desc' ? 'Highest Purchase Value' :
+                                                          receiptSortOrder === 'value_asc' ? 'Lowest Purchase Value' :
+                                                          receiptSortOrder === 'time_desc' ? 'Newest Time' : 'Oldest Time'
+                                                        }</span>
+                                                        <span>{dGroup.sales.length} receipts</span>
+                                                      </div>
+
                                                       {dGroup.sales.map(s => {
                                                         const isSelected = selectedSale?.id === s.id;
                                                         const isChecked = selectedSaleIds.includes(s.id);
@@ -1240,25 +1413,46 @@ export default function AnalyticsPanel({
                                                               isSelected ? 'bg-blue-50 border-blue-400 font-bold' : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
                                                             }`}
                                                           >
-                                                            <div className="flex items-center space-x-2 min-w-0">
+                                                            <div className="flex items-center space-x-2 min-w-0 pr-1">
                                                               <input
                                                                 type="checkbox"
                                                                 checked={isChecked}
                                                                 onChange={(e) => toggleSelectSaleId(s.id, e as any)}
                                                                 onClick={(e) => e.stopPropagation()}
-                                                                className="rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
+                                                                className="rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer shrink-0"
                                                               />
                                                               <div className="min-w-0">
-                                                                <span className="font-mono font-bold text-[10px] block truncate">{s.id}</span>
-                                                                <span className="text-[9px] text-slate-500 block truncate">
-                                                                  {new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {s.cashierName || 'Cashier'}
+                                                                <div className="flex items-center space-x-1">
+                                                                  <span className="font-mono font-extrabold text-[10px] truncate">{s.id}</span>
+                                                                  <span className="text-[8px] bg-slate-200 text-slate-700 px-1 py-0.2 rounded font-mono shrink-0">
+                                                                    {s.paymentMethod.replace(/_/g, ' ')}
+                                                                  </span>
+                                                                </div>
+                                                                <span className="text-[9px] text-slate-500 block truncate font-medium">
+                                                                  {new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {s.cashierName || 'Cashier'} {s.customerName ? `• ${s.customerName}` : ''}
                                                                 </span>
                                                               </div>
                                                             </div>
 
-                                                            <span className="font-mono font-extrabold text-slate-900 text-[11px] shrink-0">
-                                                              {currency}{s.total.toFixed(2)}
-                                                            </span>
+                                                            <div className="flex items-center space-x-1.5 shrink-0">
+                                                              <span className="font-mono font-extrabold text-slate-900 text-[11px] bg-white px-2 py-0.5 rounded border border-slate-200 shadow-2xs">
+                                                                {currency}{s.total.toFixed(2)}
+                                                              </span>
+                                                              {isAdminOrManager && (
+                                                                <button
+                                                                  onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setSelectedSaleIds([s.id]);
+                                                                    setShowBulkConfirmModal(true);
+                                                                  }}
+                                                                  className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-all cursor-pointer"
+                                                                  title={`Void receipt ${s.id}`}
+                                                                  type="button"
+                                                                >
+                                                                  <Trash2 className="w-3.5 h-3.5" />
+                                                                </button>
+                                                              )}
+                                                            </div>
                                                           </div>
                                                         );
                                                       })}
@@ -1297,7 +1491,11 @@ export default function AnalyticsPanel({
                         />
                         <span>Select All ({matchingReceipts.length})</span>
                       </div>
-                      <span>Sorted: Newest</span>
+                      <span>Sorted: {
+                        receiptSortOrder === 'value_desc' ? 'Highest Value' :
+                        receiptSortOrder === 'value_asc' ? 'Lowest Value' :
+                        receiptSortOrder === 'time_desc' ? 'Newest Time' : 'Oldest Time'
+                      }</span>
                     </div>
 
                     {matchingReceipts.length === 0 ? (
@@ -1384,7 +1582,7 @@ export default function AnalyticsPanel({
                   </div>
 
                   <div className="flex items-center space-x-1.5">
-                    {activeProfile?.role === 'admin' ? (
+                    {isAdminOrManager ? (
                       <>
                         {!isEditing && (
                           <button
@@ -1399,24 +1597,24 @@ export default function AnalyticsPanel({
                         {!isEditing && onDeleteSale && (
                           <button
                             onClick={() => {
-                              if (window.confirm(`Are you sure you want to permanently delete/void receipt ${selectedSale.id}? This action will restock the items to retail shelf inventory and cannot be undone.`)) {
+                              if (window.confirm(`Are you sure you want to void/delete receipt ${selectedSale.id}? This action will restock the items to retail shelf inventory.`)) {
                                 onDeleteSale(selectedSale.id, true);
                                 setSelectedSale(null);
-                                alert("Receipt successfully deleted and stock restocked.");
+                                alert("Receipt successfully voided and stock restocked.");
                               }
                             }}
                             className="bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs px-3.5 py-1.5 rounded-lg font-bold flex items-center space-x-1.5 transition-all border border-rose-200 cursor-pointer"
                             title="Void receipt and restock physical inventory"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
-                            <span>Delete Receipt</span>
+                            <span>Void Receipt</span>
                           </button>
                         )}
                       </>
                     ) : (
-                      <div className="text-[10px] text-slate-500 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-200 flex items-center space-x-1">
-                        <Lock className="w-3 h-3 text-slate-400" />
-                        <span>Admin-Only Edit/Delete</span>
+                      <div className="text-[10px] text-amber-800 bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200 font-bold flex items-center space-x-1">
+                        <Lock className="w-3 h-3 text-amber-600 shrink-0" />
+                        <span>Voiding Restricted to Managers & Admins</span>
                       </div>
                     )}
                     <button
@@ -1728,6 +1926,116 @@ export default function AnalyticsPanel({
                   </div>
                 )}
 
+                {/* Cashier Cross-Check & Finalize Verification Panel */}
+                <div className="mt-4 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 shadow-xs">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+                    <div className="flex items-center space-x-2">
+                      <ShieldCheck className="w-4 h-4 text-blue-600" />
+                      <span className="font-extrabold text-xs text-slate-900 uppercase tracking-wide">
+                        Cashier Receipt Cross-Check & Finalization
+                      </span>
+                    </div>
+                    {selectedSale.isFinalized ? (
+                      <span className="text-[10px] bg-emerald-100 text-emerald-800 font-extrabold px-2 py-0.5 rounded-full flex items-center space-x-1 border border-emerald-200">
+                        <Check className="w-3 h-3" />
+                        <span>Verified & Finalized</span>
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-amber-100 text-amber-800 font-bold px-2 py-0.5 rounded-full border border-amber-200">
+                        Pending Cashier Cross-Check
+                      </span>
+                    )}
+                  </div>
+
+                  {selectedSale.isFinalized ? (
+                    <div className="bg-emerald-50/90 border border-emerald-200 rounded-lg p-3 space-y-1.5 text-xs text-emerald-900">
+                      <div className="flex items-center space-x-2 font-bold">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Transaction Confirmed & Verified</span>
+                      </div>
+                      <p className="text-[11px] text-emerald-800">
+                        Cross-checked by <strong>{selectedSale.checkedBy || 'Cashier'}</strong> on {selectedSale.checkedTimestamp ? new Date(selectedSale.checkedTimestamp).toLocaleString() : 'Recent'}.
+                      </p>
+                      {selectedSale.crossCheckNotes && (
+                        <div className="bg-white p-2 rounded border border-emerald-200 text-[10px] text-slate-700 font-mono mt-1">
+                          <span className="font-bold text-slate-400 block text-[9px] uppercase">Cashier Cross-Check Note:</span>
+                          "{selectedSale.crossCheckNotes}"
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (onUpdateSale) {
+                            const updated = { ...selectedSale, isFinalized: false };
+                            onUpdateSale(updated);
+                            setSelectedSale(updated);
+                          }
+                        }}
+                        className="text-[10px] text-blue-600 hover:text-blue-800 underline font-semibold mt-1 cursor-pointer block"
+                      >
+                        Re-open Cross-Check Checklist
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <p className="text-[11px] text-slate-600 leading-relaxed font-medium">
+                        Cashiers must inspect physical goods with the customer and confirm payment receipt before stamping as Finalized.
+                      </p>
+
+                      <div className="space-y-2 text-xs bg-white p-3 rounded-lg border border-slate-200">
+                        <label className="flex items-start space-x-2.5 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={checklistItemsMatch}
+                            onChange={(e) => setChecklistItemsMatch(e.target.checked)}
+                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 mt-0.5 cursor-pointer"
+                          />
+                          <span className="text-slate-700 font-medium leading-tight">
+                            Confirm <strong>{selectedSale.items.reduce((acc, i) => acc + i.quantity, 0)} items</strong> match customer bag & physical receipt
+                          </span>
+                        </label>
+
+                        <label className="flex items-start space-x-2.5 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={checklistPaymentConfirmed}
+                            onChange={(e) => setChecklistPaymentConfirmed(e.target.checked)}
+                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 mt-0.5 cursor-pointer"
+                          />
+                          <span className="text-slate-700 font-medium leading-tight">
+                            Confirm total payment <strong>{currency}{selectedSale.total.toFixed(2)}</strong> received via <strong className="uppercase">{selectedSale.paymentMethod.replace(/_/g, ' ')}</strong>
+                          </span>
+                        </label>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase block">Cashier Cross-Check Remarks</label>
+                        <input
+                          type="text"
+                          value={crossCheckNotesInput}
+                          onChange={(e) => setCrossCheckNotesInput(e.target.value)}
+                          placeholder="e.g. Verified items with customer present, change rendered..."
+                          className="w-full text-xs p-2 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleFinalizeReceipt}
+                        disabled={!(checklistItemsMatch && checklistPaymentConfirmed)}
+                        className={`w-full py-2.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center space-x-2 shadow-xs ${
+                          checklistItemsMatch && checklistPaymentConfirmed
+                            ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer hover:shadow-md'
+                            : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                        }`}
+                      >
+                        <ShieldCheck className="w-4 h-4" />
+                        <span>Confirm Customer Purchase & Finalize Receipt</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 {/* Audit verification advice card */}
                 <div className="mt-4 bg-blue-50 border border-blue-200 rounded-xl p-3.5 text-xs text-blue-800 space-y-1.5">
                   <span className="font-bold block text-blue-900 uppercase tracking-wide text-[10px]">Anti-Theft Auditing Tip:</span>
@@ -1751,6 +2059,26 @@ export default function AnalyticsPanel({
       )}
           {/* VOIDED RECEIPTS TRASH & AUDIT BIN VIEW */}
           {receiptVaultTab === 'void_bin' && (
+            !isAdminOrManager ? (
+              <div className="bg-white rounded-2xl border border-rose-200 p-12 text-center max-w-lg mx-auto my-8 space-y-4 shadow-sm animate-fadeIn">
+                <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-full flex items-center justify-center mx-auto">
+                  <Lock className="w-8 h-8" />
+                </div>
+                <h3 className="text-base font-extrabold text-slate-900">Void Bin Restricted</h3>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  The Voided Receipts Trash Bin and Restoration audit tools are strictly restricted to <strong>Store Managers</strong> and <strong>System Administrators</strong> to prevent unauthorized cashier overrides.
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setReceiptVaultTab('active')}
+                    className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-5 py-2.5 rounded-xl cursor-pointer transition-all shadow-xs"
+                  >
+                    Return to Active Receipts Ledger
+                  </button>
+                </div>
+              </div>
+            ) : (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fadeIn">
               
               {/* Left Column: Voided List & Bulk Restoration (cols 5) */}
@@ -1978,7 +2306,7 @@ export default function AnalyticsPanel({
               </div>
 
             </div>
-          )}
+          ))}
 
         </div>
       )}
@@ -2136,6 +2464,16 @@ export default function AnalyticsPanel({
           </div>
         </div>
       )}
+
+      {/* MONTHLY PDF SALES REPORT EXPORT MODAL */}
+      <MonthlyPdfReportModal
+        isOpen={showMonthlyPdfModal}
+        onClose={() => setShowMonthlyPdfModal(false)}
+        sales={sales}
+        products={products}
+        currency={currency}
+        initialMonthKey={selectedMonthPdfKey}
+      />
 
     </div>
   );

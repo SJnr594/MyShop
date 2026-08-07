@@ -77,19 +77,21 @@ export default function AppTutorial({ onClose, currency, activeProfile }: AppTut
       title: 'Retail Cashier Profile',
       badgeBg: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
       icon: ShoppingBag,
-      summary: 'Responsible for frontline checkout, barcode scanner operations, physical receipt printing, and customer ledger records.',
+      summary: 'Frontline register operator focused on fast customer checkout, barcode scanning, printing receipts, and booking store credit.',
+      securityBoundary: '🔒 RESTRICTED: Cashiers cannot view profit margins, edit item pricing, alter stock counts, export database backups, or modify system settings.',
       tabsAllowed: ['Cash Checkout', 'Store Credit Ledger', 'Interactive Help Desk'],
+      tabsRestricted: ['Stock Room', 'Business Analytics', 'Database Backups'],
       functionalities: [
-        { name: 'Frontline Cash Checkout', desc: 'Add retail products, scan barcodes, and edit item quantities in the cart.' },
-        { name: 'Customer Credit Bookings', desc: 'Book purchases on credit by capturing names, phones, and set repayment terms.' },
-        { name: 'Wedge Printing Configuration', desc: 'Toggle receipts dynamically between 58mm Mobile rolls, 80mm Coated, or A4 Office styles.' },
-        { name: 'Partial Debt Repayments', desc: 'Process customer cash repayments and issue update statements inside the Ledger.' },
-        { name: 'Wedge Input Timing Hooks', desc: 'Execute global keystroke-captures from laser barcode hardware scanners (Honeywell/Zebra).' }
+        { name: 'Frontline Cash Checkout', desc: 'Add retail products, scan barcodes, and adjust item cart quantities.' },
+        { name: 'POS Hotkeys (F1–F9 & Esc)', desc: 'Accelerate transactions using hardware function keys for fast search, scanner toggle, and single-tap printing.' },
+        { name: 'Customer Credit Bookings', desc: 'Book purchases on credit by capturing customer names, phone numbers, and repayment dates.' },
+        { name: 'Receipt Printer Toggles', desc: 'Switch receipt styles on the fly between 58mm Mobile rolls, 80mm Thermal, or A4 Office invoices.' },
+        { name: 'Partial Debt Repayments', desc: 'Log customer cash deposits inside the Credit Ledger and issue updated account statements.' }
       ],
       trainingTasks: [
-        { id: 'c_task1', label: 'Practice adding products to the cart by clicking a catalog card.' },
-        { id: 'c_task2', label: 'Toggle the receipt print format from "80mm" to "58mm" in the print checkout popup.' },
-        { id: 'c_task3', label: 'Input a customer cash tender amount and check the calculated "Change Due".' },
+        { id: 'c_task1', label: 'Practice adding products to the cart by clicking a catalog card or pressing F3.' },
+        { id: 'c_task2', label: 'Toggle dark mode (Alt + D) to enable eye-care midnight colors for night shifts.' },
+        { id: 'c_task3', label: 'Toggle the receipt print format from "80mm" to "58mm" in the print checkout popup.' },
         { id: 'c_task4', label: 'Register a store credit purchase by entering a custom customer phone number.' },
         { id: 'c_task5', label: 'View the Credit Ledger, select an outstanding buyer, and log a partial repayment.' }
       ]
@@ -98,41 +100,45 @@ export default function AppTutorial({ onClose, currency, activeProfile }: AppTut
       title: 'Store Operations Manager Profile',
       badgeBg: 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30',
       icon: UserCheck,
-      summary: 'Authorized to oversee catalog parameters, adjust wholesale/retail stocks, manage categories and warehouse zones, audit ground discrepancies, and analyze profit margins.',
+      summary: 'Store supervisor managing catalog pricing, stock replenishment, weekly physical audits, and business performance metrics.',
+      securityBoundary: '🔒 RESTRICTED: Managers cannot alter user passcodes, execute database clears/purges, configure cloud credentials, or modify core system settings.',
       tabsAllowed: ['Cash Checkout', 'Store Credit Ledger', 'Stock Room (Catalog & Logs)', 'Business Analytics', 'Interactive Help Desk'],
+      tabsRestricted: ['Database Backups & Cloud Sync'],
       functionalities: [
-        { name: 'Manual Catalog Adjustments', desc: 'Edit product selling prices, bulk supplier costs, SKU barcodes, and minimal stock thresholds.' },
-        { name: 'Warehouse Zone Customization', desc: 'Define, edit, and expand storage zones (e.g., Wholesale Zone A, Storage Suite C).' },
-        { name: 'Weekly Ground Audits', desc: 'Reconcile digital ledger figures with physical stock on shelves, logging surplus or deficits.' },
-        { name: 'Supplier Delivery Intake', desc: 'Log incoming bulk stock directly to Back-Storage warehouses and generate logs.' },
-        { name: 'Business Health Analytics', desc: 'Monitor gross markup margins, daily order volumes, and average basket statistics.' }
+        { name: 'Catalog & Price Management', desc: 'Edit product selling prices, supplier cost prices, SKU barcodes, and minimal stock thresholds.' },
+        { name: 'Wholesale to Retail Restocking', desc: 'Shift bulk items from backroom storehouses onto active retail shelves.' },
+        { name: 'Weekly Physical Stock Audits', desc: 'Reconcile digital inventory with ground shelf counts, logging surplus or deficit flags.' },
+        { name: 'Supplier Delivery Intake', desc: 'Log incoming inventory shipments and view auto-generated stock logs.' },
+        { name: 'Business Health Analytics', desc: 'Monitor gross markup margins, revenue timelines, peak hours, and order volume logs.' }
       ],
       trainingTasks: [
         { id: 'm_task1', label: 'Create a new warehouse location (e.g. "Wholesale Zone B") in the Stock Room.' },
         { id: 'm_task2', label: 'Fast-adjust a product\'s shelf stock count using the immediate "+" or "-" buttons.' },
-        { id: 'm_task3', label: 'Initiate a Weekly Ground Audit and input a mock shelf count to generate a Deficit (📉) flag.' },
-        { id: 'm_task4', label: 'Log a write-off for damaged goods with a notes justification (e.g., "crushed packaging").' },
-        { id: 'm_task5', label: 'Analyze the SVG daily sales timeline on the business health analytics panel.' }
+        { id: 'm_task3', label: 'Initiate a Weekly Ground Audit and input a shelf count to generate a Deficit (📉) flag.' },
+        { id: 'm_task4', label: 'Log a write-off for damaged goods with an audit justification note.' },
+        { id: 'm_task5', label: 'Analyze gross profit margin indicators on the business health analytics panel.' }
       ]
     },
     admin: {
       title: 'System Administrator Profile',
       badgeBg: 'bg-blue-500/15 text-blue-400 border border-blue-500/30',
       icon: ShieldCheck,
-      summary: 'Holds master-level system clearance. In charge of operator password registries, full JSON database exports/restorations, cache cleans, and system-wide setting parameters.',
+      summary: 'Master system administrator with full clearance to manage user accounts, offline JSON backups, cloud sync, system resets, and security settings.',
+      securityBoundary: '🔓 UNRESTRICTED: Full master clearance across all registers, databases, audit logs, and system settings.',
       tabsAllowed: ['All tabs unlocked (Checkout, Credit, Stocks, Analytics, Backups, Help Desk)'],
+      tabsRestricted: ['None - Master Administrator Clearance'],
       functionalities: [
-        { name: 'Operator Credentials Oversight', desc: 'Review active cashiers and managers, adjust credentials, and enforce access control.' },
-        { name: 'JSON Backup & Recovery', desc: 'Export full database snapshots as JSON files and upload backups to recover instantly.' },
-        { name: 'System Cache Restores', desc: 'Initiate a full ledger purge, reset to initial states, or re-seed standard catalog templates.' },
-        { name: 'Store Setting Modifiers', desc: 'Lock the store currency, configure tax VAT rates, and rewrite physical receipt headers/footers.' },
-        { name: 'Global Audit Log Reviews', desc: 'Audit system logs detailing the operator, quantity change, and timestamp of every stock adjustment.' }
+        { name: 'Operator Roster & Passcodes', desc: 'Manage cashier and manager user profiles, update security PINs, and set role permissions.' },
+        { name: 'Offline HDD/SSD & Drive Backups', desc: 'Export full database snapshot files (.json) for local storage drives or cloud backup.' },
+        { name: 'System Resets & Data Purges', desc: 'Perform system data purges or reload clean catalog seed templates.' },
+        { name: 'Global Store Settings', desc: 'Configure store currency, tax VAT percentages, receipt headers, and store logo banners.' },
+        { name: 'Audit Log Surveillance', desc: 'Review immutable stock logs detailing timestamped operator adjustments.' }
       ],
       trainingTasks: [
-        { id: 'a_task1', label: 'Download a secure JSON Backup of the entire register database.' },
-        { id: 'a_task2', label: 'Inspect the system-wide Stock Logs timeline to review manual operator adjustments.' },
-        { id: 'a_task3', label: 'Review the operator profiles password hashes inside the system settings.' },
-        { id: 'a_task4', label: 'Simulate a physical printer diagnostic page output from the checklist menu.' },
+        { id: 'a_task1', label: 'Download a secure JSON Backup of the entire register database to your local drive.' },
+        { id: 'a_task2', label: 'Configure browser "Ask where to save each file before downloading" for backup routing.' },
+        { id: 'a_task3', label: 'Review operator profiles and update security passcodes in System Settings.' },
+        { id: 'a_task4', label: 'Inspect the system-wide Stock Logs timeline to audit operator stock adjustments.' },
         { id: 'a_task5', label: 'Toggle the system-wide Tax VAT percentage and verify the new rate on checkout carts.' }
       ]
     }
@@ -140,7 +146,7 @@ export default function AppTutorial({ onClose, currency, activeProfile }: AppTut
 
   const currentRoleSpec = roleSpecs[userRole];
 
-  // master guides registry with clearance-tags mapped to roles
+  // Master guides registry with clearance-tags mapped to roles
   const guides = [
     {
       id: 'checkout-flow',
@@ -317,7 +323,7 @@ export default function AppTutorial({ onClose, currency, activeProfile }: AppTut
       steps: [
         {
           title: 'Create Secure JSON Backups',
-          detail: 'Navigate to the "Database Backups" tab and click "Download Local Backup (JSON)". This aggregates all catalogs, stock logs, credit accounts, and settings into one encrypted-compatible snapshot.'
+          detail: 'Navigate to the "Database Backups" tab and click "Download Local Backup (JSON)". This aggregates all catalogs, stock logs, credit accounts, and settings into one snapshot file.'
         },
         {
           title: 'Upload & Restore Snapshots',
@@ -332,7 +338,35 @@ export default function AppTutorial({ onClose, currency, activeProfile }: AppTut
           detail: 'To perform training drills or verify receipt printers with demo stock, click "Reload Demo Store Catalog" to seed 12 premium barcoded products instantly.'
         }
       ],
-      proTip: 'Keep a weekly backup snapshot on an external USB flash drive. Because MyShop is 100% local, backup files are your ultimate security insurance!'
+      proTip: 'Perform daily JSON exports at close of business to preserve full sales ledgers against hardware failures or browser cache wipes!'
+    },
+    {
+      id: 'drive-storage-guide',
+      category: 'backups',
+      minRole: 'admin',
+      title: 'Saving Backups to HDD / SSD & Google Drive',
+      icon: Shield,
+      iconBg: 'bg-purple-50 text-purple-600 border border-purple-100',
+      description: 'How to route your local JSON database exports to physical drives (USB, HDD, SSD) and auto-sync with cloud drives like Google Drive or OneDrive.',
+      steps: [
+        {
+          title: 'Configure Browser "Ask Where to Save"',
+          detail: 'In Chrome or Edge Settings > Downloads, toggle ON "Ask where to save each file before downloading". This lets you pick your exact external drive or synced folder for every export.'
+        },
+        {
+          title: 'Direct Export to HDD / SSD / USB',
+          detail: 'When clicking "Download Local Backup (JSON)", select your external hard drive or flash drive in the save popup (e.g., E:\\Store_Backups\\2026-08-06_backup.json).'
+        },
+        {
+          title: 'Auto-Sync with Google Drive / OneDrive',
+          detail: 'Install the Google Drive for Desktop app and set your default download location to a Google Drive synced folder (e.g., Google Drive > My Drive > POS_Backups). Every backup instantly mirrors to cloud storage.'
+        },
+        {
+          title: 'Optional Firebase Realtime Cloud Sync',
+          detail: 'In the Backups tab, enable "Cloud Sync Mode" with your Firebase project config to continuously backup transactions live across multi-terminal setups.'
+        }
+      ],
+      proTip: 'Maintaining copies on both a physical external SSD and a cloud storage folder (Google Drive) guarantees maximum data resilience.'
     }
   ];
 
@@ -433,15 +467,28 @@ export default function AppTutorial({ onClose, currency, activeProfile }: AppTut
               </p>
 
               <div className="space-y-3">
-                <span className="text-[9px] uppercase tracking-widest font-extrabold text-slate-400 font-mono block">Clearance Access:</span>
+                <span className="text-[9px] uppercase tracking-widest font-extrabold text-emerald-600 block font-mono">Allowed Workspace Tabs:</span>
                 <div className="flex flex-wrap gap-1.5">
                   {currentRoleSpec.tabsAllowed.map((tab, idx) => (
-                    <span key={idx} className="bg-blue-50 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded border border-blue-100">
-                      {tab}
+                    <span key={idx} className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded border border-emerald-100/80">
+                      ✓ {tab}
                     </span>
                   ))}
                 </div>
               </div>
+
+              {currentRoleSpec.tabsRestricted && currentRoleSpec.tabsRestricted.length > 0 && userRole !== 'admin' && (
+                <div className="space-y-2 pt-2 border-t border-slate-100">
+                  <span className="text-[9px] uppercase tracking-widest font-extrabold text-rose-500 block font-mono">Restricted Tabs (Locked Out):</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {currentRoleSpec.tabsRestricted.map((tab, idx) => (
+                      <span key={idx} className="bg-rose-50 text-rose-700 text-[10px] font-bold px-2 py-0.5 rounded border border-rose-100/80">
+                        🔒 {tab}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-3.5 pt-2 border-t border-slate-100">
                 <span className="text-[9px] uppercase tracking-widest font-extrabold text-slate-400 font-mono block">Operational Scope:</span>
@@ -607,14 +654,6 @@ export default function AppTutorial({ onClose, currency, activeProfile }: AppTut
                           ))}
                         </div>
                       </div>
-
-                      {/* Pro tip block */}
-                      <div className="mt-4 pt-3 border-t border-slate-100 bg-amber-50/30 p-3 rounded-lg border border-amber-100/50 flex items-start space-x-2 text-left">
-                        <span className="text-xs mt-0.5">💡</span>
-                        <div className="text-[11px] text-amber-900 leading-relaxed">
-                          <strong>Operator Blueprint:</strong> {guide.proTip}
-                        </div>
-                      </div>
                     </div>
                   );
                 })
@@ -623,6 +662,80 @@ export default function AppTutorial({ onClose, currency, activeProfile }: AppTut
 
           </div>
 
+        </div>
+
+        {/* ROLE SECURITY & PERMISSIONS COMPARISON MATRIX */}
+        <div className="bg-white dark:bg-slate-800 rounded-xl p-5 sm:p-6 border border-slate-200 dark:border-slate-700/80 shadow-xs space-y-4 text-left">
+          <div className="flex items-center space-x-2 border-b border-slate-100 dark:border-slate-700 pb-3">
+            <Shield className="w-4.5 h-4.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+            <div>
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-900 dark:text-slate-100">Profile Security & Feature Access Matrix</h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">Clear operational boundaries across Cashier, Manager, and Administrator accounts.</p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse font-sans">
+              <thead>
+                <tr className="bg-slate-100/70 dark:bg-slate-900/80 text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700 font-bold uppercase text-[9px] tracking-wider font-mono">
+                  <th className="p-2.5 rounded-tl-lg">Feature / System Capability</th>
+                  <th className="p-2.5 text-center">Cashier</th>
+                  <th className="p-2.5 text-center">Store Manager</th>
+                  <th className="p-2.5 text-center rounded-tr-lg">Administrator</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 font-medium">
+                <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30">
+                  <td className="p-2.5 text-slate-800 dark:text-slate-200 font-bold">POS Checkout, Barcode Scan & Receipts</td>
+                  <td className="p-2.5 text-center"><span className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">✓ Full</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">✓ Full</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">✓ Full</span></td>
+                </tr>
+                <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30">
+                  <td className="p-2.5 text-slate-800 dark:text-slate-200 font-bold">Credit Ledger & Customer Repayments</td>
+                  <td className="p-2.5 text-center"><span className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">✓ Full</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">✓ Full</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">✓ Full</span></td>
+                </tr>
+                <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30">
+                  <td className="p-2.5 text-slate-800 dark:text-slate-200 font-bold">Stock Room, Price Edits & Restocking</td>
+                  <td className="p-2.5 text-center"><span className="bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">🔒 Locked</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">✓ Full</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">✓ Full</span></td>
+                </tr>
+                <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30">
+                  <td className="p-2.5 text-slate-800 dark:text-slate-200 font-bold">Weekly Stock Ground Audits & Discrepancies</td>
+                  <td className="p-2.5 text-center"><span className="bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">🔒 Locked</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">✓ Full</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">✓ Full</span></td>
+                </tr>
+                <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30">
+                  <td className="p-2.5 text-slate-800 dark:text-slate-200 font-bold">Store Analytics & Profit Margins</td>
+                  <td className="p-2.5 text-center"><span className="bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">🔒 Locked</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">✓ Full</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">✓ Full</span></td>
+                </tr>
+                <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30">
+                  <td className="p-2.5 text-slate-800 dark:text-slate-200 font-bold">Offline JSON Database Backups (HDD/SSD/Drive)</td>
+                  <td className="p-2.5 text-center"><span className="bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">🔒 Locked</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">🔒 Locked</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">★ Admin Only</span></td>
+                </tr>
+                <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30">
+                  <td className="p-2.5 text-slate-800 dark:text-slate-200 font-bold">User Roster Passcodes & PIN Management</td>
+                  <td className="p-2.5 text-center"><span className="bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">🔒 Locked</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">🔒 Locked</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">★ Admin Only</span></td>
+                </tr>
+                <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30">
+                  <td className="p-2.5 text-slate-800 dark:text-slate-200 font-bold">Database Resets, Purges & Cloud Sync Config</td>
+                  <td className="p-2.5 text-center"><span className="bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">🔒 Locked</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">🔒 Locked</span></td>
+                  <td className="p-2.5 text-center"><span className="bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 px-2 py-0.5 rounded font-mono text-[10px] font-bold">★ Admin Only</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Dynamic Role FAQ Card */}

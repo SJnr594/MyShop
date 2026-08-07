@@ -48,6 +48,18 @@ exit`;
     setTimeout(() => setCopiedScript(false), 2500);
   };
 
+  const downloadBatScript = () => {
+    const blob = new Blob([windowsBatScript], { type: 'application/x-bat' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Install-MyShop-Desk.bat';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-fadeIn">
       <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 max-w-3xl w-full overflow-hidden my-8">
@@ -238,14 +250,23 @@ exit`;
 
               <div className="bg-slate-900 text-slate-200 p-4 rounded-xl border border-slate-800 space-y-3 font-mono text-xs relative">
                 <div className="flex justify-between items-center text-slate-400 text-[10px] uppercase font-sans font-bold border-b border-slate-800 pb-2">
-                  <span>Windows Launcher Script (MyShop-Launcher.bat)</span>
-                  <button
-                    onClick={() => copyToClipboard(windowsBatScript)}
-                    className="text-blue-400 hover:text-blue-300 flex items-center gap-1 cursor-pointer font-sans"
-                  >
-                    {copiedScript ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedScript ? 'Copied!' : 'Copy Script'}</span>
-                  </button>
+                  <span>Windows Launcher Script (Install-MyShop-Desk.bat)</span>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={downloadBatScript}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1 rounded flex items-center gap-1 cursor-pointer font-sans transition-all"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download .bat File</span>
+                    </button>
+                    <button
+                      onClick={() => copyToClipboard(windowsBatScript)}
+                      className="text-blue-400 hover:text-blue-300 flex items-center gap-1 cursor-pointer font-sans"
+                    >
+                      {copiedScript ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedScript ? 'Copied!' : 'Copy'}</span>
+                    </button>
+                  </div>
                 </div>
                 <pre className="whitespace-pre-wrap overflow-x-auto text-emerald-400 text-[11px]">
                   {windowsBatScript}
@@ -257,10 +278,9 @@ exit`;
                   <span>💡 How to use this launcher script:</span>
                 </div>
                 <ol className="list-decimal list-inside space-y-1 text-[11px] text-amber-800 dark:text-amber-300">
-                  <li>Right click on your desktop → <strong>New</strong> → <strong>Text Document</strong>.</li>
-                  <li>Paste the script copied above into the document.</li>
-                  <li>Save file as <code>MyShop-Desktop.bat</code> (make sure file type is "All Files").</li>
-                  <li>Double click <code>MyShop-Desktop.bat</code> anytime to open MyShop as a native desktop application!</li>
+                  <li>Click <strong>"Download .bat File"</strong> above to save <code>Install-MyShop-Desk.bat</code> onto your PC.</li>
+                  <li>Move the file to your Windows Desktop.</li>
+                  <li>Double click <code>Install-MyShop-Desk.bat</code> anytime to open MyShop as a standalone native desktop app!</li>
                 </ol>
               </div>
             </div>

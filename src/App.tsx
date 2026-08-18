@@ -1,12 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { Product, Sale, StoreSettings, StockLog, AppState, CreditRecord, VoidedSaleRecord } from './types';
-import { DEFAULT_SETTINGS, SAMPLE_PRODUCTS } from './initialData';
+import { 
+  Product, Sale, StoreSettings, StockLog, AppState, CreditRecord, VoidedSaleRecord,
+  CashierShift, CashDrawerMovement, Supplier, PurchaseOrder, LoyaltyAccount, Promotion, StoreBranch, StockTransfer, LoyaltySettings
+} from './types';
+import { 
+  DEFAULT_SETTINGS, SAMPLE_PRODUCTS,
+  SAMPLE_SHIFTS, SAMPLE_SUPPLIERS, SAMPLE_PURCHASE_ORDERS, 
+  SAMPLE_LOYALTY_ACCOUNTS, SAMPLE_PROMOTIONS, SAMPLE_BRANCHES, SAMPLE_TRANSFERS
+} from './initialData';
 import SetupWizard from './components/SetupWizard';
 import CheckoutTerminal from './components/CheckoutTerminal';
 import InventoryManager from './components/InventoryManager';
 import AnalyticsPanel from './components/AnalyticsPanel';
 import BackupManager from './components/BackupManager';
 import CreditsManager from './components/CreditsManager';
+import ShiftManager from './components/ShiftManager';
+import SuppliersAndPurchases from './components/SuppliersAndPurchases';
+import LoyaltyAndPromotions from './components/LoyaltyAndPromotions';
+import BranchTransfers from './components/BranchTransfers';
 import BrandLogo from './components/BrandLogo';
 import AppTutorial from './components/AppTutorial';
 import Win7DiagnosticsModal from './components/Win7DiagnosticsModal';
@@ -15,7 +26,7 @@ import { useTheme } from './ThemeContext';
 import { 
   Store, ShoppingBag, Package, TrendingUp, Database, AlertCircle, Sparkles, HelpCircle,
   Lock, Unlock, Shield, ShieldCheck, UserCheck, Terminal, Save, ArrowLeft, ArrowRight, Check, CheckSquare, Square, LogOut, Printer, FileSpreadsheet, RefreshCw, Smartphone, Laptop, BookOpen,
-  Sun, Moon, Monitor, Cpu
+  Sun, Moon, Monitor, Cpu, Clock, Truck, Gift, Building2, QrCode, Tag
 } from 'lucide-react';
 
 export default function App() {
@@ -29,8 +40,19 @@ export default function App() {
   const [settings, setSettings] = useState<StoreSettings>({ ...DEFAULT_SETTINGS });
   const [isLoaded, setIsLoaded] = useState(false);
 
+  // 5 Major Feature States
+  const [shifts, setShifts] = useState<CashierShift[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const [loyaltyAccounts, setLoyaltyAccounts] = useState<LoyaltyAccount[]>([]);
+  const [promotions, setPromotions] = useState<Promotion[]>([]);
+  const [branches, setBranches] = useState<StoreBranch[]>([]);
+  const [stockTransfers, setStockTransfers] = useState<StockTransfer[]>([]);
+
   // Active UI navigation tab
-  const [activeTab, setActiveTab] = useState<'checkout' | 'inventory' | 'analytics' | 'backups' | 'credits' | 'tutorial'>('checkout');
+  const [activeTab, setActiveTab] = useState<
+    'checkout' | 'shifts' | 'inventory' | 'transfers' | 'suppliers' | 'loyalty' | 'credits' | 'analytics' | 'backups' | 'tutorial'
+  >('checkout');
 
   // Profile Security & Checklist States
   const [activeProfile, setActiveProfile] = useState<any | null>(null);
@@ -183,77 +205,62 @@ export default function App() {
       const storedLogs = localStorage.getItem('myshop_stock_logs');
       const storedCredits = localStorage.getItem('myshop_credits');
       const storedVoided = localStorage.getItem('myshop_voided_sales');
+      const storedShifts = localStorage.getItem('myshop_shifts');
+      const storedSuppliers = localStorage.getItem('myshop_suppliers');
+      const storedPOs = localStorage.getItem('myshop_purchase_orders');
+      const storedLoyalty = localStorage.getItem('myshop_loyalty_accounts');
+      const storedPromos = localStorage.getItem('myshop_promotions');
+      const storedBranches = localStorage.getItem('myshop_branches');
+      const storedTransfers = localStorage.getItem('myshop_stock_transfers');
 
       if (storedProducts) setProducts(JSON.parse(storedProducts));
       if (storedSales) setSales(JSON.parse(storedSales));
       if (storedLogs) setStockLogs(JSON.parse(storedLogs));
       if (storedCredits) setCredits(JSON.parse(storedCredits));
       if (storedVoided) setVoidedSales(JSON.parse(storedVoided));
+
+      setShifts(storedShifts ? JSON.parse(storedShifts) : [...SAMPLE_SHIFTS]);
+      setSuppliers(storedSuppliers ? JSON.parse(storedSuppliers) : [...SAMPLE_SUPPLIERS]);
+      setPurchaseOrders(storedPOs ? JSON.parse(storedPOs) : [...SAMPLE_PURCHASE_ORDERS]);
+      setLoyaltyAccounts(storedLoyalty ? JSON.parse(storedLoyalty) : [...SAMPLE_LOYALTY_ACCOUNTS]);
+      setPromotions(storedPromos ? JSON.parse(storedPromos) : [...SAMPLE_PROMOTIONS]);
+      setBranches(storedBranches ? JSON.parse(storedBranches) : [...SAMPLE_BRANCHES]);
+      setStockTransfers(storedTransfers ? JSON.parse(storedTransfers) : [...SAMPLE_TRANSFERS]);
       
       let loadedSettings = { ...DEFAULT_SETTINGS };
       if (storedSettings) {
-        loadedSettings = JSON.parse(storedSettings);
-        // Automatically migrate old $ default currency to GH₵ for the user
-        if (loadedSettings.currency === '$') {
-          loadedSettings.currency = 'GH₵';
-        }
-        // Ensure categories list exists
-        if (!loadedSettings.categories || loadedSettings.categories.length === 0) {
-          loadedSettings.categories = [...(DEFAULT_SETTINGS.categories || [])];
-        }
-        setSettings(loadedSettings);
-      } else {
-        // First-time load: keep default settings (with isSetupCompleted: false)
-        setSettings({ ...DEFAULT_SETTINGS });
-      }
-
-      // Restore active operator session if available
-      const storedProfile = localStorage.getItem('myshop_active_profile');
-      const storedChecked = localStorage.getItem('myshop_has_checked_printer');
-      if (storedProfile) {
         try {
-          const parsedProf = JSON.parse(storedProfile);
-          const profilesList = loadedSettings.profiles || [
-            { id: 'u_admin', name: 'System Administrator', role: 'admin', passwordHash: 'admin123' },
-            { id: 'u_manager', name: 'Store Manager', role: 'manager', passwordHash: 'manager123' },
-            { id: 'u_cashier', name: 'Retail Cashier', role: 'cashier', passwordHash: 'cashier123' }
-          ];
-          const matchedProf = profilesList.find(p => p.id === parsedProf.id);
-          if (matchedProf) {
-            setActiveProfile(matchedProf);
+          loadedSettings = JSON.parse(storedSettings);
+          // Automatically migrate old $ default currency to GH₵ for the user
+          if (loadedSettings.currency === '$') {
+            loadedSettings.currency = 'GH₵';
           }
-        } catch (e) {
-          console.error("Error parsing stored active profile session:", e);
+        } catch (err) {
+          console.error("Error parsing stored settings:", err);
         }
       }
+      setSettings(loadedSettings);
 
-      if (storedChecked === 'true') {
+      const storedActiveProfile = localStorage.getItem('myshop_active_profile');
+      if (storedActiveProfile) {
+        try {
+          setActiveProfile(JSON.parse(storedActiveProfile));
+        } catch {}
+      }
+      const storedPrinterChecked = localStorage.getItem('myshop_has_checked_printer');
+      if (storedPrinterChecked === 'true') {
         setHasCheckedPrinter(true);
         setPrinterChecked(true);
         setRollChecked(true);
         setScannerChecked(true);
       }
+
+      setIsLoaded(true);
     } catch (e) {
-      console.error("Failed to load state from LocalStorage:", e);
-    } finally {
+      console.error("Failed to load initial data from LocalStorage:", e);
       setIsLoaded(true);
     }
   }, []);
-
-  // Save states to localStorage whenever they change
-  useEffect(() => {
-    if (!isLoaded) return;
-    try {
-      localStorage.setItem('myshop_products', JSON.stringify(products));
-      localStorage.setItem('myshop_sales', JSON.stringify(sales));
-      localStorage.setItem('myshop_settings', JSON.stringify(settings));
-      localStorage.setItem('myshop_stock_logs', JSON.stringify(stockLogs));
-      localStorage.setItem('myshop_credits', JSON.stringify(credits));
-      localStorage.setItem('myshop_voided_sales', JSON.stringify(voidedSales));
-    } catch (e) {
-      console.error("Failed to save state to LocalStorage:", e);
-    }
-  }, [products, sales, settings, stockLogs, credits, voidedSales, isLoaded]);
 
   // Save session states to localStorage whenever they change
   useEffect(() => {
@@ -269,6 +276,32 @@ export default function App() {
       console.error("Failed to save session state to LocalStorage:", e);
     }
   }, [activeProfile, hasCheckedPrinter, isLoaded]);
+
+  // Save core application states to localStorage whenever they change
+  useEffect(() => {
+    if (!isLoaded) return;
+    try {
+      localStorage.setItem('myshop_products', JSON.stringify(products));
+      localStorage.setItem('myshop_sales', JSON.stringify(sales));
+      localStorage.setItem('myshop_settings', JSON.stringify(settings));
+      localStorage.setItem('myshop_stock_logs', JSON.stringify(stockLogs));
+      localStorage.setItem('myshop_credits', JSON.stringify(credits));
+      localStorage.setItem('myshop_voided_sales', JSON.stringify(voidedSales));
+      localStorage.setItem('myshop_shifts', JSON.stringify(shifts));
+      localStorage.setItem('myshop_suppliers', JSON.stringify(suppliers));
+      localStorage.setItem('myshop_purchase_orders', JSON.stringify(purchaseOrders));
+      localStorage.setItem('myshop_loyalty_accounts', JSON.stringify(loyaltyAccounts));
+      localStorage.setItem('myshop_promotions', JSON.stringify(promotions));
+      localStorage.setItem('myshop_branches', JSON.stringify(branches));
+      localStorage.setItem('myshop_stock_transfers', JSON.stringify(stockTransfers));
+    } catch (e) {
+      console.error("Failed to save core app state to LocalStorage:", e);
+    }
+  }, [
+    products, sales, settings, stockLogs, credits, voidedSales,
+    shifts, suppliers, purchaseOrders, loyaltyAccounts, promotions, branches, stockTransfers,
+    isLoaded
+  ]);
 
   // ONBOARDING SETUP WIZARD COMPLETE
   const handleSetupComplete = (completedSettings: StoreSettings, initialProducts: Product[]) => {
@@ -478,6 +511,26 @@ export default function App() {
     // Add sales record
     setSales(prev => [...prev, finalizedSale]);
 
+    // Update active cashier shift if open
+    setShifts(prev => prev.map(s => {
+      if (s.status === 'open') {
+        const isCash = finalizedSale.paymentMethod === 'cash';
+        const isCard = finalizedSale.paymentMethod === 'card';
+        const isMobile = finalizedSale.paymentMethod === 'mobile_money';
+        const isCredit = finalizedSale.paymentMethod === 'credit';
+        return {
+          ...s,
+          cashSales: s.cashSales + (isCash ? finalizedSale.total : 0),
+          cardSales: s.cardSales + (isCard ? finalizedSale.total : 0),
+          mobileMoneySales: s.mobileMoneySales + (isMobile ? finalizedSale.total : 0),
+          creditSales: s.creditSales + (isCredit ? finalizedSale.total : 0),
+          expectedCash: s.expectedCash + (isCash ? finalizedSale.total : 0),
+          salesCount: (s.salesCount || 0) + 1
+        };
+      }
+      return s;
+    }));
+
     // Create a Store Credit Ledger entry if checkout is marked as credit
     if (finalizedSale.paymentMethod === 'credit') {
       const newCreditRecord: CreditRecord = {
@@ -514,6 +567,299 @@ export default function App() {
     return finalizedSale;
   };
 
+  // ===================== 5 MAJOR FEATURE HANDLERS =====================
+  
+  // 1. CASHIER SHIFT HANDLERS
+  const activeShift = shifts.find(s => s.status === 'open' && (s.cashierId === activeProfile?.id || s.cashierName === activeProfile?.name)) || shifts.find(s => s.status === 'open') || null;
+
+  const handleOpenShift = (openingFloat: number, notes?: string) => {
+    const newShift: CashierShift = {
+      id: `shift_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      cashierId: activeProfile?.id || 'u_admin',
+      cashierName: activeProfile?.name || 'Store Operator',
+      startTime: Date.now(),
+      openingFloat,
+      expectedCash: openingFloat,
+      totalCashSales: 0,
+      totalCardSales: 0,
+      totalMobileMoneySales: 0,
+      totalCreditSales: 0,
+      totalSalesCount: 0,
+      cashInTotal: 0,
+      cashOutTotal: 0,
+      status: 'open',
+      notes,
+      movements: [
+        {
+          id: `mov_open_${Date.now()}`,
+          shiftId: `shift_${Date.now()}`,
+          timestamp: Date.now(),
+          type: 'opening_float',
+          amount: openingFloat,
+          reason: 'Shift opening float',
+          cashierId: activeProfile?.id || 'u_admin',
+          cashierName: activeProfile?.name || 'Store Operator'
+        }
+      ]
+    };
+    setShifts(prev => [newShift, ...prev]);
+  };
+
+  const handleCloseShift = (closingActualCash: number, notes?: string) => {
+    setShifts(prev => prev.map(s => {
+      if (s.status === 'open') {
+        const expected = s.expectedCash ?? (s.openingFloat + s.totalCashSales + s.cashInTotal - s.cashOutTotal);
+        const variance = closingActualCash - expected;
+        return {
+          ...s,
+          endTime: Date.now(),
+          closingActualCash,
+          expectedCash: expected,
+          variance,
+          status: 'closed',
+          notes: notes ? `${s.notes ? s.notes + ' | ' : ''}${notes}` : s.notes
+        };
+      }
+      return s;
+    }));
+  };
+
+  const handleAddMovement = (type: 'cash_in' | 'cash_out', amount: number, reason: string) => {
+    setShifts(prev => prev.map(s => {
+      if (s.status === 'open') {
+        const movement: CashDrawerMovement = {
+          id: `mov_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          shiftId: s.id,
+          timestamp: Date.now(),
+          type,
+          amount,
+          reason,
+          cashierId: activeProfile?.id || 'u_admin',
+          cashierName: activeProfile?.name || 'Store Operator'
+        };
+        const newCashIn = type === 'cash_in' ? s.cashInTotal + amount : s.cashInTotal;
+        const newCashOut = type === 'cash_out' ? s.cashOutTotal + amount : s.cashOutTotal;
+        const newExpected = (s.expectedCash ?? s.openingFloat) + (type === 'cash_in' ? amount : -amount);
+        return {
+          ...s,
+          cashInTotal: newCashIn,
+          cashOutTotal: newCashOut,
+          expectedCash: newExpected,
+          movements: [...(s.movements || []), movement]
+        };
+      }
+      return s;
+    }));
+  };
+
+  // 2. SUPPLIER & PURCHASE ORDER HANDLERS
+  const handleAddSupplier = (supplier: Omit<Supplier, 'id' | 'createdAt'>) => {
+    const newSupp: Supplier = {
+      ...supplier,
+      id: `supp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      createdAt: Date.now()
+    };
+    setSuppliers(prev => [...prev, newSupp]);
+  };
+
+  const handleUpdateSupplier = (id: string, updated: Partial<Supplier>) => {
+    setSuppliers(prev => prev.map(s => s.id === id ? { ...s, ...updated } : s));
+  };
+
+  const handleDeleteSupplier = (id: string) => {
+    setSuppliers(prev => prev.filter(s => s.id !== id));
+  };
+
+  const handleCreatePurchaseOrder = (order: Omit<PurchaseOrder, 'id' | 'createdAt'>) => {
+    const newOrder: PurchaseOrder = {
+      ...order,
+      id: `PO-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`,
+      createdAt: Date.now()
+    };
+    setPurchaseOrders(prev => [newOrder, ...prev]);
+  };
+
+  const handleReceivePurchaseOrder = (poId: string) => {
+    const po = purchaseOrders.find(o => o.id === poId);
+    if (!po || po.status === 'received') return;
+
+    const stockLogsToAdd: StockLog[] = [];
+    setProducts(prev => prev.map(p => {
+      const item = po.items.find(i => i.productId === p.id);
+      if (item) {
+        const qtyUnits = item.quantityUnits || (item.quantityCartons ? item.quantityCartons * (p.unitsPerCarton || 24) : 0);
+        stockLogsToAdd.push({
+          id: `log_po_${po.id}_${p.id}_${Date.now()}`,
+          productId: p.id,
+          productName: p.name,
+          timestamp: Date.now(),
+          type: 'purchase_stock',
+          quantity: qtyUnits,
+          notes: `Received purchase order ${po.id} from supplier "${po.supplierName}". Stocked +${qtyUnits} ${p.unit || 'units'} into bulk wholesale storehouse.`
+        });
+        return {
+          ...p,
+          wholesaleStock: p.wholesaleStock + (item.quantityCartons || Math.ceil(qtyUnits / (p.unitsPerCarton || 24)))
+        };
+      }
+      return p;
+    }));
+
+    setStockLogs(prev => [...prev, ...stockLogsToAdd]);
+    setPurchaseOrders(prev => prev.map(o => o.id === poId ? { ...o, status: 'received', receivedAt: Date.now(), receivedBy: activeProfile?.name || 'Manager' } : o));
+  };
+
+  // 3. LOYALTY & PROMOTIONS HANDLERS
+  const handleRedeemLoyaltyPoints = (customerId: string, pointsToRedeem: number) => {
+    setLoyaltyAccounts(prev => prev.map(c => {
+      if (c.customerId === customerId || c.customerPhone === customerId) {
+        return {
+          ...c,
+          pointsBalance: Math.max(0, c.pointsBalance - pointsToRedeem),
+          totalPointsRedeemed: c.totalPointsRedeemed + pointsToRedeem
+        };
+      }
+      return c;
+    }));
+  };
+
+  const handleAddLoyaltyPoints = (customerId: string, pointsEarned: number) => {
+    setLoyaltyAccounts(prev => {
+      const exists = prev.some(c => c.customerId === customerId || c.customerPhone === customerId);
+      if (exists) {
+        return prev.map(c => {
+          if (c.customerId === customerId || c.customerPhone === customerId) {
+            const newTotalEarned = c.totalPointsEarned + pointsEarned;
+            const newBalance = c.pointsBalance + pointsEarned;
+            const newTier = newTotalEarned >= 400 ? 'Platinum' : newTotalEarned >= 200 ? 'Gold' : newTotalEarned >= 100 ? 'Silver' : 'Standard';
+            return {
+              ...c,
+              pointsBalance: newBalance,
+              totalPointsEarned: newTotalEarned,
+              tier: newTier,
+              lastUpdated: Date.now()
+            };
+          }
+          return c;
+        });
+      } else {
+        const newAcc: LoyaltyAccount = {
+          customerId,
+          customerName: customerId,
+          customerPhone: customerId,
+          pointsBalance: pointsEarned,
+          totalPointsEarned: pointsEarned,
+          totalPointsRedeemed: 0,
+          tier: 'Standard',
+          lastUpdated: Date.now()
+        };
+        return [...prev, newAcc];
+      }
+    });
+  };
+
+  const handleAddPromotion = (promo: Omit<Promotion, 'id' | 'usageCount'>) => {
+    const newPromo: Promotion = {
+      ...promo,
+      id: `promo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      usageCount: 0
+    };
+    setPromotions(prev => [...prev, newPromo]);
+  };
+
+  const handleTogglePromotion = (id: string) => {
+    setPromotions(prev => prev.map(p => p.id === id ? { ...p, isActive: !p.isActive } : p));
+  };
+
+  const handleDeletePromotion = (id: string) => {
+    setPromotions(prev => prev.filter(p => p.id !== id));
+  };
+
+  const handleUpdateLoyaltySettings = (loyaltySettings: LoyaltySettings) => {
+    setSettings(prev => ({ ...prev, loyaltySettings }));
+  };
+
+  const handleAdjustCustomerPoints = (customerId: string, pointsDelta: number, _reason: string) => {
+    setLoyaltyAccounts(prev => prev.map(c => {
+      if (c.customerId === customerId || c.customerPhone === customerId) {
+        const newBalance = Math.max(0, c.pointsBalance + pointsDelta);
+        const newTotalEarned = pointsDelta > 0 ? c.totalPointsEarned + pointsDelta : c.totalPointsEarned;
+        const newTier = newTotalEarned >= 400 ? 'Platinum' : newTotalEarned >= 200 ? 'Gold' : newTotalEarned >= 100 ? 'Silver' : 'Standard';
+        return {
+          ...c,
+          pointsBalance: newBalance,
+          totalPointsEarned: newTotalEarned,
+          tier: newTier,
+          lastUpdated: Date.now()
+        };
+      }
+      return c;
+    }));
+  };
+
+  const handleAddLoyaltyCustomer = (customer: Omit<LoyaltyAccount, 'pointsBalance' | 'totalPointsEarned' | 'totalPointsRedeemed' | 'tier' | 'lastUpdated'>) => {
+    const newAcc: LoyaltyAccount = {
+      ...customer,
+      pointsBalance: 0,
+      totalPointsEarned: 0,
+      totalPointsRedeemed: 0,
+      tier: 'Standard',
+      lastUpdated: Date.now()
+    };
+    setLoyaltyAccounts(prev => [...prev, newAcc]);
+  };
+
+  // 4. MULTI-BRANCH STOCK TRANSFER HANDLERS
+  const handleAddBranch = (branch: Omit<StoreBranch, 'id'>) => {
+    const newBranch: StoreBranch = {
+      ...branch,
+      id: `branch_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`
+    };
+    setBranches(prev => [...prev, newBranch]);
+  };
+
+  const handleUpdateBranch = (id: string, updated: Partial<StoreBranch>) => {
+    setBranches(prev => prev.map(b => b.id === id ? { ...b, ...updated } : b));
+  };
+
+  const handleDeleteBranch = (id: string) => {
+    setBranches(prev => prev.filter(b => b.id !== id));
+  };
+
+  const handleCreateTransfer = (transfer: Omit<StockTransfer, 'id' | 'createdAt'>) => {
+    const newTransfer: StockTransfer = {
+      ...transfer,
+      id: `TRF-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(100 + Math.random() * 900)}`,
+      createdAt: Date.now()
+    };
+    setStockTransfers(prev => [newTransfer, ...prev]);
+  };
+
+  const handleCompleteTransfer = (transferId: string) => {
+    const trf = stockTransfers.find(t => t.id === transferId);
+    if (!trf || trf.status === 'completed') return;
+
+    const stockLogsToAdd: StockLog[] = [];
+    setProducts(prev => prev.map(p => {
+      const item = trf.items.find(i => i.productId === p.id);
+      if (item) {
+        stockLogsToAdd.push({
+          id: `log_trf_${trf.id}_${p.id}_${Date.now()}`,
+          productId: p.id,
+          productName: p.name,
+          timestamp: Date.now(),
+          type: 'adjustment',
+          quantity: item.quantity,
+          notes: `Stock Transfer ${trf.id} completed between "${trf.fromBranchName}" and "${trf.toBranchName}".`
+        });
+      }
+      return p;
+    }));
+
+    setStockLogs(prev => [...prev, ...stockLogsToAdd]);
+    setStockTransfers(prev => prev.map(t => t.id === transferId ? { ...t, status: 'completed', completedAt: Date.now(), receivedBy: activeProfile?.name || 'Store Manager' } : t));
+  };
+
   // RESTORE FULL DATABASE FROM JSON
   const handleRestoreState = (newState: AppState) => {
     setProducts(newState.products || []);
@@ -521,6 +867,13 @@ export default function App() {
     setSettings(newState.settings || { ...DEFAULT_SETTINGS });
     setStockLogs(newState.stockLogs || []);
     setCredits(newState.credits || []);
+    if ((newState as any).shifts) setShifts((newState as any).shifts);
+    if ((newState as any).suppliers) setSuppliers((newState as any).suppliers);
+    if ((newState as any).purchaseOrders) setPurchaseOrders((newState as any).purchaseOrders);
+    if ((newState as any).loyaltyAccounts) setLoyaltyAccounts((newState as any).loyaltyAccounts);
+    if ((newState as any).promotions) setPromotions((newState as any).promotions);
+    if ((newState as any).branches) setBranches((newState as any).branches);
+    if ((newState as any).stockTransfers) setStockTransfers((newState as any).stockTransfers);
   };
 
   // ERASE/RESET DATABASE
@@ -530,6 +883,13 @@ export default function App() {
       setProducts([...SAMPLE_PRODUCTS]);
       setSales([]);
       setCredits([]);
+      setShifts([...SAMPLE_SHIFTS]);
+      setSuppliers([...SAMPLE_SUPPLIERS]);
+      setPurchaseOrders([...SAMPLE_PURCHASE_ORDERS]);
+      setLoyaltyAccounts([...SAMPLE_LOYALTY_ACCOUNTS]);
+      setPromotions([...SAMPLE_PROMOTIONS]);
+      setBranches([...SAMPLE_BRANCHES]);
+      setStockTransfers([...SAMPLE_TRANSFERS]);
       
       const initialLogs: StockLog[] = SAMPLE_PRODUCTS.map(p => ({
         id: `log_init_${p.id}_${Date.now()}`,
@@ -546,6 +906,13 @@ export default function App() {
       setSales([]);
       setStockLogs([]);
       setCredits([]);
+      setShifts([]);
+      setSuppliers([]);
+      setPurchaseOrders([]);
+      setLoyaltyAccounts([]);
+      setPromotions([]);
+      setBranches([]);
+      setStockTransfers([]);
       setSettings({ ...DEFAULT_SETTINGS, isSetupCompleted: false });
     }
   };
@@ -1444,11 +1811,15 @@ export default function App() {
           </div>
 
           {/* Navigation with Role Filters */}
-          <nav className="flex-1 p-4 space-y-2 text-sm font-medium">
+          <nav className="flex-1 p-3 space-y-1.5 text-xs font-medium overflow-y-auto">
             {[
               { id: 'checkout', label: 'Cash Checkout', icon: ShoppingBag, allowed: ['admin', 'manager', 'cashier'] },
-              { id: 'credits', label: 'Credit Ledger', icon: BookOpen, badge: activeUnpaidCreditsCount > 0 ? activeUnpaidCreditsCount : undefined, allowed: ['admin', 'manager', 'cashier'] },
-              { id: 'inventory', label: 'Stock Room', icon: Package, badge: activeAlertsCount > 0 ? activeAlertsCount : undefined, allowed: ['admin', 'manager'] },
+              { id: 'shifts', label: 'Shift & Cash Till', icon: Clock, badge: activeShift ? 'OPEN' : undefined, badgeColor: 'bg-emerald-500', allowed: ['admin', 'manager', 'cashier'] },
+              { id: 'inventory', label: 'Stock Room', icon: Package, badge: activeAlertsCount > 0 ? activeAlertsCount : undefined, badgeColor: 'bg-red-500', allowed: ['admin', 'manager'] },
+              { id: 'transfers', label: 'Branch Transfers', icon: Building2, badge: stockTransfers.filter(t => t.status === 'pending' || t.status === 'dispatched').length || undefined, badgeColor: 'bg-indigo-500', allowed: ['admin', 'manager'] },
+              { id: 'suppliers', label: 'Suppliers & POs', icon: Truck, badge: purchaseOrders.filter(p => p.status === 'ordered' || p.status === 'pending').length || undefined, badgeColor: 'bg-blue-500', allowed: ['admin', 'manager'] },
+              { id: 'loyalty', label: 'Loyalty & Promos', icon: Gift, allowed: ['admin', 'manager', 'cashier'] },
+              { id: 'credits', label: 'Credit Ledger', icon: BookOpen, badge: activeUnpaidCreditsCount > 0 ? activeUnpaidCreditsCount : undefined, badgeColor: 'bg-amber-500', allowed: ['admin', 'manager', 'cashier'] },
               { id: 'analytics', label: activeProfile?.role === 'cashier' ? 'Receipt Vault & Audit' : 'Business Analytics', icon: TrendingUp, allowed: ['admin', 'manager', 'cashier'] },
               { id: 'backups', label: 'Database Backups', icon: Database, allowed: ['admin', 'manager'] },
               { id: 'tutorial', label: 'Training Manual', icon: HelpCircle, allowed: ['admin', 'manager', 'cashier'] }
@@ -1461,7 +1832,7 @@ export default function App() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
-                  className={`w-full flex items-center gap-3 p-3 rounded-lg transition-all cursor-pointer text-left ${
+                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-all cursor-pointer text-left ${
                     isActive 
                       ? 'bg-blue-600 text-white shadow-md shadow-blue-600/10 font-bold' 
                       : 'text-slate-300 hover:text-white hover:bg-slate-800'
@@ -1469,10 +1840,10 @@ export default function App() {
                   id={`nav-tab-${tab.id}`}
                   type="button"
                 >
-                  <IconComp className="w-5 h-5 shrink-0" />
+                  <IconComp className="w-4 h-4 shrink-0" />
                   <span className="flex-1 truncate">{tab.label}</span>
                   {tab.badge && (
-                    <span className="bg-red-500 text-white font-bold font-mono text-[9px] px-1.5 py-0.5 rounded-full animate-pulse">
+                    <span className={`${tab.badgeColor || 'bg-red-500'} text-white font-bold font-mono text-[9px] px-1.5 py-0.5 rounded-full animate-pulse`}>
                       {tab.badge}
                     </span>
                   )}
@@ -1482,24 +1853,26 @@ export default function App() {
           </nav>
 
           {/* Bottom Panel */}
-          <div className="p-4 border-t border-slate-800 space-y-4">
-            <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700">
-              <div className="flex justify-between items-center text-xs mb-2">
-                <span className="text-blue-400 font-semibold">Registry Health</span>
-                <span className="text-[10px] text-slate-300 font-semibold font-mono">{products.length} SKUs</span>
+          <div className="p-3.5 border-t border-slate-800 space-y-3">
+            <div className="bg-slate-800/50 p-2.5 rounded-lg border border-slate-700">
+              <div className="flex justify-between items-center text-xs mb-1.5">
+                <span className="text-blue-400 font-semibold text-[11px]">Active Shift</span>
+                <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded font-mono ${activeShift ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-700 text-slate-400'}`}>
+                  {activeShift ? 'TILL OPEN' : 'CLOSED'}
+                </span>
               </div>
               <div className="w-full bg-slate-700 h-1.5 rounded-full">
                 <div 
-                  className="bg-blue-500 h-1.5 rounded-full transition-all duration-500" 
-                  style={{ width: `${Math.min(100, Math.max(10, (products.length / 20) * 100))}%` }}
+                  className="bg-emerald-500 h-1.5 rounded-full transition-all duration-500" 
+                  style={{ width: activeShift ? '100%' : '0%' }}
                 ></div>
               </div>
-              <p className="text-[10px] mt-2 text-slate-400 opacity-85">
-                Operator Role Level: <span className="font-bold text-white uppercase">{activeProfile.role}</span>
+              <p className="text-[10px] mt-1.5 text-slate-400">
+                Operator: <span className="font-bold text-white uppercase">{activeProfile.role}</span> ({activeProfile.name})
               </p>
             </div>
             
-            <div className="flex items-center gap-2 text-[10px] uppercase font-bold tracking-widest text-slate-400">
+            <div className="flex items-center gap-2 text-[9.5px] uppercase font-bold tracking-widest text-slate-400">
               <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"></span>
               <span>Printer Wedge Intercept OK</span>
             </div>
@@ -1528,23 +1901,33 @@ export default function App() {
           </header>
 
           {/* DESKTOP STATUS BAR HEADER - Desktop Only (Print Hidden) */}
-          <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-8 items-center justify-between hidden md:flex shrink-0 print:hidden transition-colors duration-200" id="myshop-desktop-header">
+          <header className="h-14 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-6 items-center justify-between hidden md:flex shrink-0 print:hidden transition-colors duration-200" id="myshop-desktop-header">
             <div className="flex items-center gap-4 text-sm font-medium">
-              <span className="text-slate-500 dark:text-slate-300 font-semibold">{settings.storeName || 'MyShop'} Management Suite</span>
+              <span className="text-slate-500 dark:text-slate-300 font-semibold">{settings.storeName || 'MyShop'} Suite</span>
               <span className="text-slate-300 dark:text-slate-700">/</span>
               <span className="text-blue-600 dark:text-blue-400 font-extrabold text-xs uppercase tracking-wider">
-                {activeTab === 'checkout' ? 'Cash Checkout' :
+                {activeTab === 'checkout' ? 'Cash Checkout Register' :
+                 activeTab === 'shifts' ? 'Shift & Cash Till Reconciliation' :
                  activeTab === 'credits' ? 'Store Credit Ledger' :
-                 activeTab === 'inventory' ? 'Stock Room' :
+                 activeTab === 'inventory' ? 'Stock Room Inventory' :
+                 activeTab === 'transfers' ? 'Multi-Branch Stock Transfers' :
+                 activeTab === 'suppliers' ? 'Suppliers & Purchase Orders' :
+                 activeTab === 'loyalty' ? 'Customer Loyalty & Promotions' :
                  activeTab === 'analytics' ? 'Business Analytics' :
                  activeTab === 'backups' ? 'Database Backups' : 'Interactive Training Manual'}
               </span>
             </div>
 
             <div className="flex items-center gap-6">
+              {activeShift && (
+                <div className="flex items-center gap-2 text-xs font-semibold px-2.5 py-1 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 rounded-full border border-emerald-200 dark:border-emerald-800">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span>Till Open: {settings.currency}{activeShift.expectedCash.toFixed(2)} Expected</span>
+                </div>
+              )}
               <div className="flex items-center gap-2 text-xs font-semibold px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-full border border-slate-200 dark:border-slate-750">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span className="text-slate-600 dark:text-slate-300">Hardware Thermal Printer Active</span>
+                <span className="text-slate-600 dark:text-slate-300">Hardware Wedge Active</span>
               </div>
               <div className="text-right">
                 <span className="text-[10px] text-slate-400 block font-mono leading-none">Register Session</span>
@@ -1559,7 +1942,7 @@ export default function App() {
           </header>
 
           {/* MAIN WORKSPACE SCROLL CONTAINER */}
-          <main className="flex-1 p-4 md:p-8 overflow-y-auto print:p-0">
+          <main className="flex-1 p-4 md:p-6 overflow-y-auto print:p-0">
             <div className="max-w-7xl mx-auto">
               
               {activeTab === 'checkout' && (
@@ -1568,6 +1951,67 @@ export default function App() {
                   settings={settings}
                   onCheckout={handleCheckout}
                   activeProfile={activeProfile}
+                  promotions={promotions}
+                  loyaltyAccounts={loyaltyAccounts}
+                  onRedeemLoyaltyPoints={handleRedeemLoyaltyPoints}
+                  onAddLoyaltyPoints={handleAddLoyaltyPoints}
+                />
+              )}
+
+              {activeTab === 'shifts' && (
+                <ShiftManager
+                  shifts={shifts}
+                  activeShift={activeShift}
+                  settings={settings}
+                  activeProfile={activeProfile}
+                  onOpenShift={handleOpenShift}
+                  onCloseShift={handleCloseShift}
+                  onAddMovement={handleAddMovement}
+                />
+              )}
+
+              {activeTab === 'transfers' && (
+                <BranchTransfers
+                  branches={branches}
+                  stockTransfers={stockTransfers}
+                  products={products}
+                  settings={settings}
+                  activeProfile={activeProfile}
+                  onAddBranch={handleAddBranch}
+                  onUpdateBranch={handleUpdateBranch}
+                  onDeleteBranch={handleDeleteBranch}
+                  onCreateTransfer={handleCreateTransfer}
+                  onCompleteTransfer={handleCompleteTransfer}
+                />
+              )}
+
+              {activeTab === 'suppliers' && (
+                <SuppliersAndPurchases
+                  suppliers={suppliers}
+                  purchaseOrders={purchaseOrders}
+                  products={products}
+                  settings={settings}
+                  activeProfile={activeProfile}
+                  onAddSupplier={handleAddSupplier}
+                  onUpdateSupplier={handleUpdateSupplier}
+                  onDeleteSupplier={handleDeleteSupplier}
+                  onCreatePurchaseOrder={handleCreatePurchaseOrder}
+                  onReceivePurchaseOrder={handleReceivePurchaseOrder}
+                />
+              )}
+
+              {activeTab === 'loyalty' && (
+                <LoyaltyAndPromotions
+                  promotions={promotions}
+                  loyaltyAccounts={loyaltyAccounts}
+                  settings={settings}
+                  activeProfile={activeProfile}
+                  onAddPromotion={handleAddPromotion}
+                  onTogglePromotion={handleTogglePromotion}
+                  onDeletePromotion={handleDeletePromotion}
+                  onUpdateLoyaltySettings={handleUpdateLoyaltySettings}
+                  onAdjustCustomerPoints={handleAdjustCustomerPoints}
+                  onAddLoyaltyCustomer={handleAddLoyaltyCustomer}
                 />
               )}
 
@@ -1614,7 +2058,10 @@ export default function App() {
 
               {activeTab === 'backups' && (
                 <BackupManager
-                  appState={{ products, sales, settings, stockLogs, credits }}
+                  appState={{ 
+                    products, sales, settings, stockLogs, credits,
+                    shifts, suppliers, purchaseOrders, loyaltyAccounts, promotions, branches, stockTransfers
+                  } as any}
                   onRestoreState={handleRestoreState}
                   onResetState={handleResetState}
                   onUpdateSettings={handleUpdateSettings}
@@ -1632,11 +2079,15 @@ export default function App() {
           </main>
 
           {/* MOBILE BOTTOM NAVIGATION - Mobile Only (Print Hidden) */}
-          <nav className="md:hidden bg-slate-900 border-t border-slate-800 px-2 py-1.5 flex justify-around sticky bottom-0 z-40 print:hidden" id="myshop-mobile-bottom-nav">
+          <nav className="md:hidden bg-slate-900 border-t border-slate-800 px-2 py-1.5 flex justify-around sticky bottom-0 z-40 print:hidden overflow-x-auto" id="myshop-mobile-bottom-nav">
             {[
               { id: 'checkout', label: 'Checkout', icon: ShoppingBag, allowed: ['admin', 'manager', 'cashier'] },
+              { id: 'shifts', label: 'Till', icon: Clock, badge: activeShift ? '●' : undefined, allowed: ['admin', 'manager', 'cashier'] },
               { id: 'credits', label: 'Credits', icon: BookOpen, badge: activeUnpaidCreditsCount > 0 ? activeUnpaidCreditsCount : undefined, allowed: ['admin', 'manager', 'cashier'] },
               { id: 'inventory', label: 'Stocks', icon: Package, badge: activeAlertsCount > 0 ? activeAlertsCount : undefined, allowed: ['admin', 'manager'] },
+              { id: 'transfers', label: 'Transfers', icon: Building2, allowed: ['admin', 'manager'] },
+              { id: 'suppliers', label: 'Suppliers', icon: Truck, allowed: ['admin', 'manager'] },
+              { id: 'loyalty', label: 'Loyalty', icon: Gift, allowed: ['admin', 'manager', 'cashier'] },
               { id: 'analytics', label: 'Analytics', icon: TrendingUp, allowed: ['admin', 'manager'] },
               { id: 'backups', label: 'Backups', icon: Database, allowed: ['admin', 'manager'] },
               { id: 'tutorial', label: 'Help', icon: HelpCircle, allowed: ['admin', 'manager', 'cashier'] }
@@ -1649,16 +2100,16 @@ export default function App() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
-                  className={`relative text-[10px] font-bold p-1.5 flex flex-col items-center space-y-1 transition-all rounded-lg cursor-pointer ${
+                  className={`relative text-[10px] font-bold p-1.5 flex flex-col items-center space-y-1 transition-all rounded-lg cursor-pointer shrink-0 min-w-[50px] ${
                     isActive ? 'text-blue-500 font-extrabold' : 'text-slate-400 hover:text-slate-200'
                   }`}
                   id={`mobile-nav-tab-${tab.id}`}
                   type="button"
                 >
-                  <IconComp className="w-5 h-5" />
-                  <span>{tab.label}</span>
+                  <IconComp className="w-4 h-4" />
+                  <span className="text-[9px]">{tab.label}</span>
                   {tab.badge && (
-                    <span className="absolute top-1 right-2 bg-red-500 text-white font-bold font-mono text-[8px] px-1 rounded-full animate-pulse">
+                    <span className="absolute top-0.5 right-1 bg-red-500 text-white font-bold font-mono text-[8px] px-1 rounded-full animate-pulse">
                       {tab.badge}
                     </span>
                   )}

@@ -1,6 +1,6 @@
 {
   "name": "MyShop",
-  "description": "A comprehensive store management application for MyShop, featuring barcode checkout, wholesale/retail stock tracking, receipt printing, customer/product analytics, and local/online backup options.",
+  "description": "Enterprise-grade POS and Store Management platform featuring barcode checkout, dual retail/wholesale inventory, cashier shift reconciliation (Z-reports), suppliers and purchase orders, multi-branch stock transfers, customer loyalty and promotional discounts, store credit ledger, thermal receipt printing, and offline durability.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -107,6 +107,144 @@ export interface UserProfile {
   passwordHash: string; // Plaintext or simple hash for local sandbox
 }
 
+// 1. SHIFT MANAGEMENT & CASH DRAWER RECONCILIATION
+export interface CashDrawerMovement {
+  id: string;
+  shiftId: string;
+  timestamp: number;
+  type: 'cash_in' | 'cash_out' | 'sale' | 'credit_payment' | 'opening_float';
+  amount: number;
+  reason: string;
+  cashierId: string;
+  cashierName: string;
+}
+
+export interface CashierShift {
+  id: string;
+  cashierId: string;
+  cashierName: string;
+  startTime: number;
+  endTime?: number;
+  openingFloat: number;
+  closingActualCash?: number;
+  expectedCash?: number;
+  variance?: number; // actual - expected
+  totalCashSales: number;
+  totalCardSales: number;
+  totalMobileMoneySales: number;
+  totalCreditSales: number;
+  totalSalesCount: number;
+  cashInTotal: number;
+  cashOutTotal: number;
+  status: 'open' | 'closed';
+  notes?: string;
+  movements: CashDrawerMovement[];
+}
+
+// 2. SUPPLIER & PURCHASE ORDER (PO) TRACKING
+export interface Supplier {
+  id: string;
+  name: string;
+  contactPerson?: string;
+  phone: string;
+  email?: string;
+  address?: string;
+  taxId?: string;
+  paymentTerms?: string;
+  notes?: string;
+  createdAt: number;
+}
+
+export interface PurchaseOrderItem {
+  productId: string;
+  productName: string;
+  barcode?: string;
+  quantityCartons?: number;
+  quantityUnits: number;
+  unitCost: number;
+  totalCost: number;
+}
+
+export interface PurchaseOrder {
+  id: string; // e.g. PO-20260818-001
+  supplierId: string;
+  supplierName: string;
+  createdAt: number;
+  expectedDeliveryDate?: number;
+  receivedAt?: number;
+  status: 'draft' | 'ordered' | 'received' | 'cancelled';
+  items: PurchaseOrderItem[];
+  totalAmount: number;
+  notes?: string;
+  createdBy: string;
+  receivedBy?: string;
+}
+
+// 3. CUSTOMER LOYALTY & PROMOTIONAL DISCOUNTS
+export interface LoyaltyAccount {
+  customerId: string; // phone or customer ID
+  customerName: string;
+  customerPhone: string;
+  pointsBalance: number;
+  totalPointsEarned: number;
+  totalPointsRedeemed: number;
+  tier: 'Standard' | 'Silver' | 'Gold' | 'Platinum';
+  lastUpdated: number;
+}
+
+export interface Promotion {
+  id: string;
+  code: string; // e.g. SAVE10
+  title: string;
+  type: 'percentage' | 'fixed_amount';
+  value: number; // e.g. 10 for 10% or 20 for $20
+  minOrderAmount?: number;
+  startDate: number;
+  endDate?: number;
+  isActive: boolean;
+  usageCount: number;
+}
+
+export interface LoyaltySettings {
+  enabled: boolean;
+  pointsPerCurrencyUnit: number; // e.g. 0.1 (1 pt per $10 spent)
+  currencyPerPointRedeemed: number; // e.g. 0.05 (100 pts = $5)
+  minPointsToRedeem: number; // e.g. 20
+}
+
+// 4. MULTI-BRANCH & WAREHOUSE TRANSFERS
+export interface StoreBranch {
+  id: string;
+  name: string;
+  code: string; // e.g. MAIN, WH-01, NORTH
+  address: string;
+  phone: string;
+  isMain: boolean;
+}
+
+export interface StockTransferItem {
+  productId: string;
+  productName: string;
+  barcode: string;
+  quantity: number;
+  unit?: string;
+}
+
+export interface StockTransfer {
+  id: string; // e.g. TRF-20260818-001
+  fromBranchId: string;
+  fromBranchName: string;
+  toBranchId: string;
+  toBranchName: string;
+  createdAt: number;
+  completedAt?: number;
+  status: 'pending' | 'in_transit' | 'completed' | 'cancelled';
+  items: StockTransferItem[];
+  notes?: string;
+  dispatchedBy: string;
+  receivedBy?: string;
+}
+
 export interface StoreSettings {
   storeName: string;
   address: string;
@@ -133,6 +271,8 @@ export interface StoreSettings {
   };
   profiles?: UserProfile[]; // Customized user profiles
   categories?: string[]; // Customizable product categories/warehouse locations
+  loyaltySettings?: LoyaltySettings;
+  branches?: StoreBranch[];
 }
 
 export interface AppState {
@@ -142,4 +282,12 @@ export interface AppState {
   stockLogs: StockLog[];
   credits?: CreditRecord[];
   voidedSales?: VoidedSaleRecord[];
+  shifts?: CashierShift[];
+  activeShift?: CashierShift | null;
+  suppliers?: Supplier[];
+  purchaseOrders?: PurchaseOrder[];
+  promotions?: Promotion[];
+  loyaltyAccounts?: LoyaltyAccount[];
+  branches?: StoreBranch[];
+  stockTransfers?: StockTransfer[];
 }

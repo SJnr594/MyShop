@@ -1,16 +1,30 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Product, Sale, SaleItem, StoreSettings, UserProfile } from '../types';
-import { ShoppingCart, Search, User, Trash2, CreditCard, DollarSign, Tag, Printer, CheckCircle, Barcode, Camera, Sparkles, AlertCircle, HelpCircle, Keyboard, Monitor, Volume2 } from 'lucide-react';
+import { Product, Sale, SaleItem, StoreSettings, UserProfile, Promotion, LoyaltyAccount } from '../types';
+import { ShoppingCart, Search, User, Trash2, CreditCard, DollarSign, Tag, Printer, CheckCircle, Barcode, Camera, Sparkles, AlertCircle, HelpCircle, Keyboard, Monitor, Volume2, Award, QrCode, Gift, Check, X } from 'lucide-react';
 import BarcodeScanner from './BarcodeScanner';
+import DigitalReceiptModal from './DigitalReceiptModal';
 
 interface CheckoutTerminalProps {
   products: Product[];
   settings: StoreSettings;
   onCheckout: (sale: Omit<Sale, 'id' | 'timestamp'>) => Sale;
   activeProfile?: UserProfile | null;
+  promotions?: Promotion[];
+  loyaltyAccounts?: LoyaltyAccount[];
+  onRedeemLoyaltyPoints?: (customerId: string, pointsToRedeem: number) => void;
+  onAddLoyaltyPoints?: (customerId: string, pointsEarned: number) => void;
 }
 
-export default function CheckoutTerminal({ products, settings, onCheckout, activeProfile }: CheckoutTerminalProps) {
+export default function CheckoutTerminal({ 
+  products, 
+  settings, 
+  onCheckout, 
+  activeProfile,
+  promotions = [],
+  loyaltyAccounts = [],
+  onRedeemLoyaltyPoints,
+  onAddLoyaltyPoints
+}: CheckoutTerminalProps) {
   // Cart state
   const [cart, setCart] = useState<SaleItem[]>([]);
   
@@ -27,6 +41,18 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
     d.setDate(d.getDate() + 14);
     return d.toISOString().split('T')[0];
   });
+
+  // Promotional Discounts
+  const [promoCodeInput, setPromoCodeInput] = useState('');
+  const [appliedPromo, setAppliedPromo] = useState<Promotion | null>(null);
+  const [promoError, setPromoError] = useState('');
+
+  // Loyalty Program
+  const [selectedLoyaltyCust, setSelectedLoyaltyCust] = useState<LoyaltyAccount | null>(null);
+  const [redeemedPoints, setRedeemedPoints] = useState(0);
+
+  // Digital Receipt Modal
+  const [showDigitalReceiptModal, setShowDigitalReceiptModal] = useState(false);
   
   // Search state for manual click-add
   const [searchQuery, setSearchQuery] = useState('');
@@ -424,14 +450,57 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
     setNotes('');
     setDiscountPercent(0);
     setCompletedSale(null);
+    setAppliedPromo(null);
+    setPromoCodeInput('');
+    setPromoError('');
+    setSelectedLoyaltyCust(null);
+    setRedeemedPoints(0);
+  };
+
+  // Apply Promo Code Handler
+  const handleApplyPromo = () => {
+    setPromoError('');
+    if (!promoCodeInput.trim()) return;
+
+    const matched = promotions.find(p => p.code.toUpperCase() === promoCodeInput.trim().toUpperCase() && p.isActive);
+    if (!matched) {
+      setPromoError('Invalid or expired promotional code.');
+      return;
+    }
+
+    if (matched.minOrderAmount && subtotal < matched.minOrderAmount) {
+      setPromoError(`Minimum basket of ${settings.currency}${matched.minOrderAmount.toFixed(2)} required for code ${matched.code}.`);
+      return;
+    }
+
+    setAppliedPromo(matched);
+    setPromoError('');
   };
 
   // Calculations
   const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const discountAmount = subtotal * (discountPercent / 100);
-  const taxableAmount = Math.max(0, subtotal - discountAmount);
+  
+  // 1. Manual Percentage Discount
+  const manualDiscount = subtotal * (discountPercent / 100);
+  
+  // 2. Promotional Code Discount
+  const promoDiscount = appliedPromo 
+    ? (appliedPromo.type === 'percentage' ? (subtotal * (appliedPromo.value / 100)) : appliedPromo.value)
+    : 0;
+
+  // 3. Customer Loyalty Points Cash Discount
+  const loyaltyDiscount = redeemedPoints * (settings.loyaltySettings?.currencyPerPointRedeemed || 0.05);
+
+  const totalDiscountAmount = Math.min(subtotal, manualDiscount + promoDiscount + loyaltyDiscount);
+  const discountAmount = totalDiscountAmount;
+  const taxableAmount = Math.max(0, subtotal - totalDiscountAmount);
   const taxAmount = taxableAmount * (settings.taxRate / 100);
   const finalTotal = taxableAmount + taxAmount;
+
+  // Potential loyalty points to be earned by customer
+  const potentialPointsEarned = (settings.loyaltySettings?.enabled && (selectedLoyaltyCust || customerPhone.trim()))
+    ? Math.floor(finalTotal * (settings.loyaltySettings.pointsPerCurrencyUnit || 0.1))
+    : 0;
 
   const autoSetReceiptFormat = (items: SaleItem[], pMethod: string) => {
     const isWholesale = pMethod === 'credit' || items.some(i => i.packType === 'full_carton' || i.packType === 'half_carton' || (i.packLabel && i.packLabel.toLowerCase().includes('carton')));
@@ -455,6 +524,22 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
     // Auto-select receipt template format based on transaction type and settings
     autoSetReceiptFormat(cart, paymentMethod);
 
+    // Apply loyalty points deduction / reward if applicable
+    const custId = selectedLoyaltyCust?.customerId || (customerPhone.trim() ? customerPhone.trim() : null);
+    if (custId) {
+      if (redeemedPoints > 0 && onRedeemLoyaltyPoints) {
+        onRedeemLoyaltyPoints(custId, redeemedPoints);
+      }
+      if (potentialPointsEarned > 0 && onAddLoyaltyPoints) {
+        onAddLoyaltyPoints(custId, potentialPointsEarned);
+      }
+    }
+
+    // Increment promo usage
+    if (appliedPromo) {
+      appliedPromo.usageCount = (appliedPromo.usageCount || 0) + 1;
+    }
+
     // Perform checkout logic (deduct shelf stock, add sale)
     const saleData = {
       customerName: customerName.trim() || 'Walk-in Customer',
@@ -462,10 +547,10 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
       items: cart,
       subtotal,
       tax: taxAmount,
-      discount: discountAmount,
+      discount: totalDiscountAmount,
       total: finalTotal,
       paymentMethod,
-      notes: notes.trim() || undefined,
+      notes: notes.trim() || (appliedPromo ? `Promo: ${appliedPromo.code}` : undefined),
       cashierName: activeProfile?.name || 'System Operator',
       dueDate: paymentMethod === 'credit' ? new Date(creditDueDate).getTime() : undefined
     };
@@ -1002,12 +1087,50 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
       <div className="lg:col-span-5 space-y-5" id="checkout-sidebar">
         {/* Customer Info Form */}
         <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-5 space-y-4">
-          <h3 className="text-xs font-bold uppercase text-slate-700 tracking-wider flex items-center space-x-1.5">
-            <User className="w-4 h-4 text-slate-500" />
-            <span>Customer Loyalty Identifier</span>
-          </h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase text-slate-700 tracking-wider flex items-center space-x-1.5">
+              <User className="w-4 h-4 text-slate-500" />
+              <span>Customer & Loyalty Info</span>
+            </h3>
+
+            {selectedLoyaltyCust && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200 uppercase">
+                ★ {selectedLoyaltyCust.tier} Member
+              </span>
+            )}
+          </div>
 
           <div className="grid grid-cols-1 gap-3 text-xs">
+            {/* Loyalty Quick Customer Picker if available */}
+            {loyaltyAccounts.length > 0 && (
+              <div>
+                <label className="block text-slate-500 mb-1 text-[11px]">Quick Select Registered VIP Customer</label>
+                <select
+                  value={selectedLoyaltyCust?.customerId || ''}
+                  onChange={(e) => {
+                    const cust = loyaltyAccounts.find(c => c.customerId === e.target.value);
+                    if (cust) {
+                      setSelectedLoyaltyCust(cust);
+                      setCustomerName(cust.customerName);
+                      setCustomerPhone(cust.customerPhone);
+                      setRedeemedPoints(0);
+                    } else {
+                      setSelectedLoyaltyCust(null);
+                      setRedeemedPoints(0);
+                    }
+                  }}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-800 text-xs focus:outline-none"
+                >
+                  <option value="">-- Or type customer info manually below --</option>
+                  {loyaltyAccounts.map(c => (
+                    <option key={c.customerId} value={c.customerId}>
+                      {c.customerName} ({c.customerPhone}) - {c.pointsBalance} pts [{c.tier}]
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div>
               <label className="block text-slate-500 mb-1">Customer Name (Optional)</label>
               <input
@@ -1020,16 +1143,67 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
               />
             </div>
             <div>
-              <label className="block text-slate-500 mb-1">Customer Phone Number (For sales analytics)</label>
+              <label className="block text-slate-500 mb-1">Customer Phone Number (For sales analytics / Loyalty ID)</label>
               <input
                 type="text"
                 value={customerPhone}
-                onChange={(e) => setCustomerPhone(e.target.value)}
+                onChange={(e) => {
+                  const phone = e.target.value;
+                  setCustomerPhone(phone);
+                  const matched = loyaltyAccounts.find(c => c.customerPhone === phone.trim() || c.customerId === phone.trim());
+                  if (matched) {
+                    setSelectedLoyaltyCust(matched);
+                    if (!customerName) setCustomerName(matched.customerName);
+                  }
+                }}
                 placeholder="e.g. +1 (555) 019-9283"
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none font-mono"
                 id="customer-phone-input"
               />
             </div>
+
+            {/* Loyalty Points Redemption Widget */}
+            {selectedLoyaltyCust && settings.loyaltySettings?.enabled && (
+              <div className="bg-indigo-50/70 border border-indigo-200/80 rounded-xl p-3 space-y-2 animate-fadeIn">
+                <div className="flex items-center justify-between text-indigo-900">
+                  <div className="flex items-center space-x-1.5 font-bold text-xs">
+                    <Award className="w-4 h-4 text-indigo-600" />
+                    <span>Loyalty Balance: {selectedLoyaltyCust.pointsBalance} pts</span>
+                  </div>
+                  <span className="text-[11px] font-mono font-bold text-indigo-700">
+                    Max: {settings.currency}{(selectedLoyaltyCust.pointsBalance * (settings.loyaltySettings.currencyPerPointRedeemed || 0.05)).toFixed(2)}
+                  </span>
+                </div>
+
+                {selectedLoyaltyCust.pointsBalance >= (settings.loyaltySettings.minPointsToRedeem || 20) ? (
+                  <div className="flex items-center space-x-2 pt-1">
+                    <label className="text-[10px] text-slate-600 font-bold uppercase shrink-0">Redeem Points:</label>
+                    <input
+                      type="number"
+                      min="0"
+                      max={selectedLoyaltyCust.pointsBalance}
+                      step="10"
+                      value={redeemedPoints}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value) || 0;
+                        setRedeemedPoints(Math.min(selectedLoyaltyCust.pointsBalance, Math.max(0, val)));
+                      }}
+                      className="w-20 bg-white border border-indigo-300 rounded p-1 font-mono text-xs font-bold text-indigo-900"
+                    />
+                    {redeemedPoints > 0 && (
+                      <span className="text-[11px] font-bold text-emerald-700 font-mono">
+                        (-{settings.currency}{(redeemedPoints * (settings.loyaltySettings.currencyPerPointRedeemed || 0.05)).toFixed(2)})
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-slate-500">
+                    Need at least {settings.loyaltySettings.minPointsToRedeem || 20} points to redeem cash discounts.
+                  </p>
+                )}
+              </div>
+            )}
+
             <div>
               <label className="block text-slate-500 mb-1">Cashier Checkout Note</label>
               <input
@@ -1046,9 +1220,116 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
 
         {/* Payments Summary Calculator */}
         <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-5 space-y-4">
-          <h3 className="text-xs font-bold uppercase text-slate-700 tracking-wider">Payment Details</h3>
+          <h3 className="text-xs font-bold uppercase text-slate-700 tracking-wider">Payment & Discounts</h3>
           
           <div className="space-y-3.5 text-xs">
+            {/* Promo Code Input */}
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80 space-y-2">
+              <label className="block text-slate-600 font-bold text-[11px] flex items-center space-x-1.5">
+                <Tag className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Promotional Coupon Code</span>
+              </label>
+
+              {appliedPromo ? (
+                <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg p-2 font-mono text-xs text-emerald-800">
+                  <div className="flex items-center space-x-1.5">
+                    <Check className="w-4 h-4 text-emerald-600" />
+                    <strong>{appliedPromo.code}</strong>
+                    <span>({appliedPromo.type === 'percentage' ? `${appliedPromo.value}% OFF` : `-${settings.currency}${appliedPromo.value}`})</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAppliedPromo(null)}
+                    className="text-rose-600 hover:text-rose-800 text-[10px] font-bold uppercase cursor-pointer"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="text"
+                    placeholder="e.g. SAVE10"
+                    value={promoCodeInput}
+                    onChange={(e) => setPromoCodeInput(e.target.value.toUpperCase())}
+                    className="flex-1 bg-white uppercase font-mono font-bold text-xs p-2 border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleApplyPromo}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-2 rounded-lg text-xs transition-all cursor-pointer"
+                  >
+                    Apply
+                  </button>
+                </div>
+              )}
+
+              {promoError && (
+                <p className="text-[10px] font-bold text-rose-600">{promoError}</p>
+              )}
+            </div>
+
+            {/* Manual Percentage Discount selector */}
+            <div className="border-t border-slate-100 pt-2">
+              <label className="block text-slate-500 mb-1">Manual Cashier Discount (%)</label>
+              <div className="relative">
+                <Tag className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={discountPercent}
+                  onChange={(e) => setDiscountPercent(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
+                  className="w-1/2 text-xs pl-9 pr-3 py-2 border border-slate-200 rounded-lg focus:outline-none font-mono"
+                  id="discount-input"
+                />
+              </div>
+            </div>
+
+            {/* Subtotals Box */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/60 font-mono space-y-2 mt-4">
+              <div className="flex justify-between text-slate-500 text-[11px]">
+                <span>Basket Subtotal</span>
+                <span>{settings.currency}{subtotal.toFixed(2)}</span>
+              </div>
+              {manualDiscount > 0 && (
+                <div className="flex justify-between text-rose-600 text-[11px] font-semibold">
+                  <span>Manual Discount ({discountPercent}%)</span>
+                  <span>-{settings.currency}{manualDiscount.toFixed(2)}</span>
+                </div>
+              )}
+              {promoDiscount > 0 && (
+                <div className="flex justify-between text-emerald-600 text-[11px] font-semibold">
+                  <span>Promo Code ({appliedPromo?.code})</span>
+                  <span>-{settings.currency}{promoDiscount.toFixed(2)}</span>
+                </div>
+              )}
+              {loyaltyDiscount > 0 && (
+                <div className="flex justify-between text-indigo-600 text-[11px] font-semibold">
+                  <span>Loyalty Points ({redeemedPoints} pts)</span>
+                  <span>-{settings.currency}{loyaltyDiscount.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-slate-500 text-[11px]">
+                <span>Tax VAT ({settings.taxRate}%)</span>
+                <span>{settings.currency}{taxAmount.toFixed(2)}</span>
+              </div>
+              <div className="h-px bg-slate-200 my-2"></div>
+              <div className="flex justify-between text-slate-900 text-sm font-extrabold font-sans">
+                <span>Grand Total</span>
+                <span className="text-base text-slate-950 font-mono font-bold">{settings.currency}{finalTotal.toFixed(2)}</span>
+              </div>
+
+              {potentialPointsEarned > 0 && (
+                <div className="pt-2 border-t border-slate-200 text-[10px] text-indigo-700 flex items-center justify-between font-sans">
+                  <span className="flex items-center space-x-1">
+                    <Gift className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>Loyalty Reward on Sale:</span>
+                  </span>
+                  <strong className="font-mono text-indigo-900 font-bold">+{potentialPointsEarned} pts</strong>
+                </div>
+              )}
+            </div>
             {/* Payment method selector */}
             <div>
               <span className="block text-slate-500 mb-1.5">Payment Method</span>
@@ -2087,20 +2368,30 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
             </div>
 
             {/* PRINT / EXPORT RECEIPT MODAL ACTIONS */}
-            <div className="bg-slate-950 p-4 border-t border-slate-850 flex space-x-2.5 print:hidden">
+            <div className="bg-slate-950 p-4 border-t border-slate-850 flex flex-wrap gap-2.5 print:hidden">
               <button
                 type="button"
                 onClick={clearCart}
-                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-3 rounded-lg font-medium cursor-pointer transition-colors border border-slate-700/50 animate-pulse"
+                className="flex-1 min-w-[120px] bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-3 rounded-lg font-medium cursor-pointer transition-colors border border-slate-700/50"
                 id="receipt-done-btn"
               >
                 Done / Next Sale (Esc)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowDigitalReceiptModal(true)}
+                className="flex-1 min-w-[140px] bg-emerald-700 hover:bg-emerald-600 text-white text-xs py-3 rounded-lg font-bold flex items-center justify-center space-x-1.5 transition-all shadow-md cursor-pointer"
+                id="digital-receipt-btn"
+              >
+                <QrCode className="w-4 h-4" />
+                <span>E-Receipt (WhatsApp/QR)</span>
               </button>
               
               <button
                 type="button"
                 onClick={triggerPrintReceipt}
-                className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-xs py-3 rounded-lg font-bold flex items-center justify-center space-x-1.5 transition-all shadow-md shadow-blue-600/15 cursor-pointer hover:shadow-lg"
+                className="flex-1 min-w-[140px] bg-blue-600 hover:bg-blue-500 text-white text-xs py-3 rounded-lg font-bold flex items-center justify-center space-x-1.5 transition-all shadow-md shadow-blue-600/15 cursor-pointer hover:shadow-lg"
                 id="receipt-print-btn"
               >
                 <Printer className="w-4 h-4" />
@@ -2109,6 +2400,16 @@ export default function CheckoutTerminal({ products, settings, onCheckout, activ
             </div>
           </div>
         </div>
+      )}
+
+      {/* DIGITAL E-RECEIPT MODAL (WhatsApp, SMS, QR Code) */}
+      {completedSale && (
+        <DigitalReceiptModal
+          sale={completedSale}
+          settings={settings}
+          isOpen={showDigitalReceiptModal}
+          onClose={() => setShowDigitalReceiptModal(false)}
+        />
       )}
 
       {/* HARDWARE INTERACTION & PRINT CALIBRATION GUIDE MODAL */}

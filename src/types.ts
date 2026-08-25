@@ -256,6 +256,7 @@ export interface StoreSettings {
   receiptFooter: string;
   retailReceiptFormat?: '80mm' | '58mm' | 'A4';
   wholesaleReceiptFormat?: 'A4' | '80mm' | 'Letter';
+  defaultReceiptCopies?: number; // 1 by default, allows specifying 2 or 3 copies
   wholesaleTerms?: string;
   printerDriverType?: 'thermal_escpos' | 'dot_matrix' | 'laser_inkjet' | 'bluetooth_mobile';
   autoPrintEnabled?: boolean;

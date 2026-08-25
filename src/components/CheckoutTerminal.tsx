@@ -79,7 +79,9 @@ export default function CheckoutTerminal({
   const [checkedPayment, setCheckedPayment] = useState(false);
 
   // Printer width configuration format
-  const [printFormat, setPrintFormat] = useState<'80mm' | '58mm' | 'A4'>('80mm');
+  const [printFormat, setPrintFormat] = useState<'80mm' | '58mm' | 'A4'>(settings.retailReceiptFormat || '80mm');
+  // Receipt Copies to print (default: 1 single receipt unless specified)
+  const [printCopies, setPrintCopies] = useState<number>(settings.defaultReceiptCopies || 1);
 
   // Help tutorial modal toggle
   const [showHelpModal, setShowHelpModal] = useState(false);
@@ -566,7 +568,262 @@ export default function CheckoutTerminal({
   };
 
   const triggerPrintReceipt = () => {
-    window.print();
+    if (!completedSale) {
+      window.print();
+      return;
+    }
+
+    // Isolate printing into a single-page clean document via hidden iframe to guarantee 1 single page on all thermal and PDF drivers
+    try {
+      const existingFrame = document.getElementById('receipt-print-iframe');
+      if (existingFrame) {
+        existingFrame.remove();
+      }
+
+      const iframe = document.createElement('iframe');
+      iframe.id = 'receipt-print-iframe';
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = 'none';
+      document.body.appendChild(iframe);
+
+      const isA4 = printFormat === 'A4';
+      const is58mm = printFormat === '58mm';
+      const paperWidth = isA4 ? '210mm' : is58mm ? '58mm' : '80mm';
+      const bodyWidth = isA4 ? '190mm' : is58mm ? '48mm' : '72mm';
+      const fontSize = isA4 ? '11px' : is58mm ? '9px' : '10.5px';
+
+      const itemsHtml = completedSale.items.map((item, index) => {
+        if (isA4) {
+          return `
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="padding: 4px 0; color: #64748b;">${index + 1}</td>
+              <td style="padding: 4px 0;"><strong>${item.productName}</strong><br/><span style="font-size: 8px; color: #64748b;">BC: ${item.barcode}</span></td>
+              <td style="padding: 4px 0; text-align: center;">${item.quantity}</td>
+              <td style="padding: 4px 0; text-align: right;">${settings.currency}${item.price.toFixed(2)}</td>
+              <td style="padding: 4px 0; text-align: right; font-weight: bold;">${settings.currency}${(item.price * item.quantity).toFixed(2)}</td>
+            </tr>
+          `;
+        }
+        return `
+          <tr style="color: #000;">
+            <td style="padding: 2px 0; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.productName}</td>
+            <td style="padding: 2px 0; text-align: center;">${item.quantity}</td>
+            <td style="padding: 2px 0; text-align: right;">${settings.currency}${item.price.toFixed(2)}</td>
+            <td style="padding: 2px 0; text-align: right; font-weight: bold;">${settings.currency}${(item.price * item.quantity).toFixed(2)}</td>
+          </tr>
+        `;
+      }).join('');
+
+      let receiptHtml = '';
+      const copiesToPrint = Math.max(1, printCopies || 1);
+
+      for (let copyIdx = 0; copyIdx < copiesToPrint; copyIdx++) {
+        const copyLabel = copiesToPrint > 1 
+          ? (copyIdx === 0 ? '--- CUSTOMER COPY ---' : copyIdx === 1 ? '--- MERCHANT COPY ---' : '--- STORE ARCHIVE COPY ---')
+          : '';
+
+        if (isA4) {
+          receiptHtml += `
+            <div class="receipt-page" style="page-break-after: ${copyIdx < copiesToPrint - 1 ? 'always' : 'avoid'}; break-after: ${copyIdx < copiesToPrint - 1 ? 'always' : 'avoid'};">
+              <div style="text-align: right; font-size: 9px; font-weight: bold; color: #2563eb; margin-bottom: 4px;">${copyLabel}</div>
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 8px;">
+                <div>
+                  <h1 style="font-size: 16px; font-weight: 900; margin: 0; text-transform: uppercase;">${settings.storeName}</h1>
+                  <p style="font-size: 9px; color: #475569; margin: 2px 0; white-space: pre-line;">${settings.address}</p>
+                  ${settings.phone ? `<p style="font-size: 9px; color: #475569; margin: 0;">Tel: ${settings.phone}</p>` : ''}
+                </div>
+                <div style="text-align: right;">
+                  <h2 style="font-size: 13px; font-weight: 800; margin: 0; text-transform: uppercase;">Official Tax Invoice</h2>
+                  <p style="font-size: 9px; color: #475569; margin: 2px 0; font-family: monospace;">NO: #${completedSale.id.substring(0, 14).toUpperCase()}</p>
+                  <p style="font-size: 9px; color: #475569; margin: 0; font-family: monospace;">Date: ${new Date(completedSale.timestamp).toLocaleString()}</p>
+                </div>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-size: 10px; margin: 10px 0;">
+                <div>
+                  <div style="color: #64748b; font-size: 8px; font-weight: bold; text-transform: uppercase;">Customer / Billed To:</div>
+                  <strong>${completedSale.customerName.trim() || 'Walk-in Customer'}</strong>
+                  ${completedSale.customerPhone && completedSale.customerPhone !== 'N/A' ? `<br/><span style="color: #64748b;">Phone: ${completedSale.customerPhone}</span>` : ''}
+                </div>
+                <div style="text-align: right;">
+                  <div>Cashier: <strong>${completedSale.cashierName || 'System Cashier'}</strong></div>
+                  <div>Payment: <strong style="text-transform: uppercase;">${completedSale.paymentMethod.replace(/_/g, ' ')}</strong></div>
+                </div>
+              </div>
+              <table style="width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 6px;">
+                <thead>
+                  <tr style="border-bottom: 1px solid #94a3b8; text-transform: uppercase; font-size: 8px; color: #475569;">
+                    <th style="padding: 4px 0; text-align: left;">No.</th>
+                    <th style="padding: 4px 0; text-align: left;">Description</th>
+                    <th style="padding: 4px 0; text-align: center;">Qty</th>
+                    <th style="padding: 4px 0; text-align: right;">Unit Price</th>
+                    <th style="padding: 4px 0; text-align: right;">Total</th>
+                  </tr>
+                </thead>
+                <tbody>${itemsHtml}</tbody>
+              </table>
+              <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
+                <div style="width: 220px; font-size: 10px; border-top: 1px solid #cbd5e1; padding-top: 6px;">
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                    <span>Subtotal:</span>
+                    <span>${settings.currency}${completedSale.subtotal.toFixed(2)}</span>
+                  </div>
+                  ${completedSale.discount > 0 ? `
+                    <div style="display: flex; justify-content: space-between; color: #b91c1c; margin-bottom: 2px;">
+                      <span>Discount:</span>
+                      <span>-${settings.currency}${completedSale.discount.toFixed(2)}</span>
+                    </div>` : ''}
+                  <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                    <span>Tax (${settings.taxRate}%):</span>
+                    <span>${settings.currency}${completedSale.tax.toFixed(2)}</span>
+                  </div>
+                  <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: bold; border-top: 1px solid #000; padding-top: 4px; margin-top: 2px;">
+                    <span>Grand Total:</span>
+                    <span>${settings.currency}${completedSale.total.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+              <div style="margin-top: 14px; text-align: center; font-size: 8.5px; color: #64748b; border-top: 1px dashed #cbd5e1; padding-top: 6px;">
+                <p style="margin: 2px 0; white-space: pre-line;">${settings.receiptHeader}</p>
+                <p style="margin: 2px 0; white-space: pre-line;">${settings.receiptFooter}</p>
+              </div>
+            </div>
+          `;
+        } else {
+          // Standard 80mm & 58mm Thermal design
+          receiptHtml += `
+            <div class="receipt-page" style="page-break-after: ${copyIdx < copiesToPrint - 1 ? 'always' : 'avoid'}; break-after: ${copyIdx < copiesToPrint - 1 ? 'always' : 'avoid'};">
+              ${copyLabel ? `<div style="text-align: center; font-size: 8px; font-weight: bold; margin-bottom: 4px; border-bottom: 1px dashed #000; padding-bottom: 2px;">${copyLabel}</div>` : ''}
+              <div style="text-align: center; margin-bottom: 6px;">
+                <div style="font-size: 13px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.5px;">${settings.storeName}</div>
+                <div style="font-size: 8.5px; color: #333; margin-top: 2px; white-space: pre-line; line-height: 1.2;">${settings.address}</div>
+                ${settings.phone ? `<div style="font-size: 8.5px; color: #333;">Tel: ${settings.phone}</div>` : ''}
+                <div style="border-top: 1px dashed #000; margin: 4px 0;"></div>
+                <div style="text-align: left; font-size: 8.5px; line-height: 1.3;">
+                  <div><strong>TX NO:</strong> ${completedSale.id.toUpperCase()}</div>
+                  <div><strong>DATE:</strong> ${new Date(completedSale.timestamp).toLocaleString()}</div>
+                  <div><strong>CASHIER:</strong> ${completedSale.cashierName || 'Cashier'}</div>
+                  <div><strong>CUSTOMER:</strong> ${completedSale.customerName || 'Walk-in'}</div>
+                </div>
+                <div style="border-top: 1px dashed #000; margin: 4px 0;"></div>
+              </div>
+              <table style="width: 100%; border-collapse: collapse; font-size: 9px; margin-bottom: 6px;">
+                <thead>
+                  <tr style="border-bottom: 1px dashed #000; font-size: 8px; text-transform: uppercase;">
+                    <th style="padding-bottom: 2px; text-align: left;">Item</th>
+                    <th style="padding-bottom: 2px; text-align: center;">Qty</th>
+                    <th style="padding-bottom: 2px; text-align: right;">Price</th>
+                    <th style="padding-bottom: 2px; text-align: right;">Total</th>
+                  </tr>
+                </thead>
+                <tbody>${itemsHtml}</tbody>
+              </table>
+              <div style="border-top: 1px dashed #000; padding-top: 4px; font-size: 9.5px; line-height: 1.3;">
+                <div style="display: flex; justify-content: space-between;">
+                  <span>SUBTOTAL</span>
+                  <span>${settings.currency}${completedSale.subtotal.toFixed(2)}</span>
+                </div>
+                ${completedSale.discount > 0 ? `
+                  <div style="display: flex; justify-content: space-between; font-weight: bold;">
+                    <span>DISCOUNT</span>
+                    <span>-${settings.currency}${completedSale.discount.toFixed(2)}</span>
+                  </div>` : ''}
+                <div style="display: flex; justify-content: space-between;">
+                  <span>TAX (${settings.taxRate}%)</span>
+                  <span>${settings.currency}${completedSale.tax.toFixed(2)}</span>
+                </div>
+                <div style="border-top: 1px dashed #000; margin: 2px 0;"></div>
+                <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: 900;">
+                  <span>GRAND TOTAL</span>
+                  <span>${settings.currency}${completedSale.total.toFixed(2)}</span>
+                </div>
+                <div style="border-top: 1px dashed #000; margin: 2px 0;"></div>
+                <div style="display: flex; justify-content: space-between; font-size: 8.5px; text-transform: uppercase;">
+                  <span>PAID BY</span>
+                  <span>${completedSale.paymentMethod.replace(/_/g, ' ')}</span>
+                </div>
+                ${completedSale.paymentMethod === 'credit' && completedSale.dueDate ? `
+                  <div style="display: flex; justify-content: space-between; font-size: 8.5px; font-weight: bold;">
+                    <span>DUE DATE</span>
+                    <span>${new Date(completedSale.dueDate).toLocaleDateString()}</span>
+                  </div>` : ''}
+                ${completedSale.notes ? `
+                  <div style="font-size: 8px; font-style: italic; margin-top: 2px;">Notes: "${completedSale.notes}"</div>` : ''}
+              </div>
+              <div style="border-top: 1px dashed #000; margin-top: 6px; padding-top: 4px; text-align: center;">
+                <div style="font-family: monospace; font-size: 7.5px; letter-spacing: 2px;">*${completedSale.id}*</div>
+              </div>
+              <div style="text-align: center; font-size: 8px; color: #444; margin-top: 6px; line-height: 1.25;">
+                <p style="margin: 1px 0; white-space: pre-line;">${settings.receiptHeader}</p>
+                <div style="width: 40%; border-top: 1px solid #ccc; margin: 3px auto;"></div>
+                <p style="margin: 1px 0; white-space: pre-line;">${settings.receiptFooter}</p>
+              </div>
+            </div>
+          `;
+        }
+      }
+
+      const doc = iframe.contentWindow?.document;
+      if (doc) {
+        doc.open();
+        doc.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>Receipt - ${completedSale.id}</title>
+              <style>
+                @page {
+                  size: ${paperWidth} auto;
+                  margin: 0mm !important;
+                }
+                * {
+                  box-sizing: border-box;
+                  margin: 0;
+                  padding: 0;
+                }
+                html, body {
+                  background: #fff;
+                  color: #000;
+                  width: ${paperWidth};
+                  font-family: 'JetBrains Mono', Consolas, Monaco, monospace;
+                  font-size: ${fontSize};
+                  line-height: 1.25;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                  -webkit-print-color-adjust: exact;
+                  print-color-adjust: exact;
+                }
+                .receipt-page {
+                  width: ${bodyWidth};
+                  margin: 0 auto;
+                  padding: 4mm 2mm;
+                  page-break-inside: avoid !important;
+                  break-inside: avoid !important;
+                }
+              </style>
+            </head>
+            <body>
+              ${receiptHtml}
+            </body>
+          </html>
+        `);
+        doc.close();
+
+        setTimeout(() => {
+          iframe.contentWindow?.focus();
+          iframe.contentWindow?.print();
+          setTimeout(() => {
+            iframe.remove();
+          }, 3000);
+        }, 150);
+      }
+    } catch (err) {
+      console.error('Print iframe error:', err);
+      window.print();
+    }
   };
 
   // Filter products for click-to-add grid
@@ -2012,27 +2269,51 @@ export default function CheckoutTerminal({
               </button>
             </div>
 
-            {/* PRINTER WIDTH FORMAT SELECTOR */}
-            <div className="bg-slate-950/95 px-4 py-2 border-b border-slate-900 flex items-center justify-between text-xs print:hidden">
-              <span className="text-[10px] uppercase font-bold text-slate-500 font-mono flex items-center gap-1">
-                <Printer className="w-3.5 h-3.5 text-blue-500" />
-                <span>Selected Printer:</span>
-              </span>
-              <div className="flex space-x-1 bg-slate-900 p-0.5 rounded border border-slate-800">
-                {(['80mm', '58mm', 'A4'] as const).map((format) => (
-                  <button
-                    type="button"
-                    key={format}
-                    onClick={() => setPrintFormat(format)}
-                    className={`px-2.5 py-1 rounded text-[10px] font-bold font-mono transition-all cursor-pointer ${
-                      printFormat === format
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
-                    }`}
-                  >
-                    {format.toUpperCase()}
-                  </button>
-                ))}
+            {/* PRINTER WIDTH FORMAT & COPIES SELECTOR */}
+            <div className="bg-slate-950/95 px-4 py-2 border-b border-slate-900 flex flex-wrap items-center justify-between gap-2 text-xs print:hidden">
+              <div className="flex items-center space-x-2">
+                <span className="text-[10px] uppercase font-bold text-slate-500 font-mono flex items-center gap-1">
+                  <Printer className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Format:</span>
+                </span>
+                <div className="flex space-x-1 bg-slate-900 p-0.5 rounded border border-slate-800">
+                  {(['80mm', '58mm', 'A4'] as const).map((format) => (
+                    <button
+                      type="button"
+                      key={format}
+                      onClick={() => setPrintFormat(format)}
+                      className={`px-2.5 py-1 rounded text-[10px] font-bold font-mono transition-all cursor-pointer ${
+                        printFormat === format
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                      }`}
+                    >
+                      {format.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* COPIES CONTROLLER (Default 1 single receipt unless specified) */}
+              <div className="flex items-center space-x-1.5 bg-slate-900 px-2 py-1 rounded border border-slate-800 text-[11px] font-mono">
+                <span className="text-[10px] uppercase font-bold text-slate-400">Copies:</span>
+                <div className="flex items-center space-x-1">
+                  {[1, 2, 3].map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => setPrintCopies(num)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer ${
+                        printCopies === num
+                          ? 'bg-emerald-600 text-white shadow-xs'
+                          : 'bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700'
+                      }`}
+                      title={num === 1 ? '1 Single Receipt (Default)' : `${num} Copies (${num === 2 ? 'Customer + Merchant Copy' : 'Customer + Merchant + Store Slip'})`}
+                    >
+                      {num}x {num === 1 ? '(Single)' : ''}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -2064,7 +2345,7 @@ export default function CheckoutTerminal({
             <div className="p-4 bg-slate-900 overflow-y-auto max-h-[50vh] flex flex-col items-center">
               {printFormat === 'A4' ? (
                 /* =================== A4 COMPLETED INVOICE DESIGN =================== */
-                <div className="bg-white text-slate-800 shadow-2xl p-8 w-full font-sans border border-slate-200 text-xs rounded-lg text-left animate-fadeIn" id="receipt-print-area">
+                <div className="bg-white text-slate-800 shadow-2xl p-8 w-full font-sans border border-slate-200 text-xs rounded-lg text-left animate-fadeIn receipt-a4" id="receipt-print-area">
                   {/* Watermark Paid Warning */}
                   <div className="bg-emerald-600 text-white text-center font-bold px-3 py-1.5 mb-6 text-[10px] uppercase tracking-widest rounded-md print:hidden">
                     ✓ SECURE TRANSACTION BOOKED & PAID
@@ -2182,7 +2463,7 @@ export default function CheckoutTerminal({
               ) : printFormat === '58mm' ? (
                 /* =================== 58MM COMPLETED RECEIPT DESIGN =================== */
                 <div 
-                  className="bg-[#FCFBF8] text-slate-800 shadow-xl px-3.5 py-4 w-full max-w-[220px] text-[10px] font-mono relative text-left animate-fadeIn"
+                  className="bg-[#FCFBF8] text-slate-800 shadow-xl px-3.5 py-4 w-full max-w-[220px] text-[10px] font-mono relative text-left animate-fadeIn receipt-58mm"
                   id="receipt-print-area"
                 >
                   <div className="bg-black text-white text-center font-bold px-1.5 py-0.5 mb-2.5 text-[8px] uppercase tracking-wider">
@@ -2262,7 +2543,7 @@ export default function CheckoutTerminal({
               ) : (
                 /* =================== 80MM STANDARD COMPLETED RECEIPT DESIGN =================== */
                 <div 
-                  className="bg-[#FCFBF8] text-slate-800 shadow-xl px-5 py-6 w-full max-w-[310px] text-xs font-mono relative text-left animate-fadeIn"
+                  className="bg-[#FCFBF8] text-slate-800 shadow-xl px-5 py-6 w-full max-w-[310px] text-xs font-mono relative text-left animate-fadeIn receipt-80mm"
                   id="receipt-print-area"
                 >
                   <div className="text-center space-y-1 mb-4">
@@ -2395,7 +2676,7 @@ export default function CheckoutTerminal({
                 id="receipt-print-btn"
               >
                 <Printer className="w-4 h-4" />
-                <span>Print Physical Receipt</span>
+                <span>Print Physical Receipt {printCopies > 1 ? `(${printCopies} Copies)` : '(1 Copy)'}</span>
               </button>
             </div>
           </div>

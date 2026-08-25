@@ -259,6 +259,7 @@ export const DEFAULT_SETTINGS: StoreSettings = {
   receiptFooter: 'ITEMS SOLD ARE RETURNABLE WITHIN 7 DAYS WITH ORIGINAL RECEIPT\nHAVE A WONDERFUL DAY!',
   retailReceiptFormat: '80mm',
   wholesaleReceiptFormat: 'A4',
+  defaultReceiptCopies: 1,
   wholesaleTerms: '1. Payment due upon receipt unless credit terms agreed.\n2. Goods once sold in sound condition are not returnable without prior manager authorization.\n3. Claims regarding quantity or damaged bulk packs must be logged within 48 hours.',
   printerDriverType: 'thermal_escpos',
   autoPrintEnabled: false,
